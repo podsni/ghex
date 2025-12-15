@@ -131,19 +131,150 @@ func SetKeyPermissions(keyPath string) error {
 	return nil
 }
 
-// TestConnection tests SSH connection to a host
+// EnsureKeyPermissions checks and fixes SSH key permissions
+// Returns true if permissions were fixed, false if already correct
+func EnsureKeyPermissions(keyPath string) (bool, error) {
+	keyPath = platform.ExpandPath(keyPath)
+
+	// Check if file exists
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		return false, fmt.Errorf("cannot access key: %w", err)
+	}
+
+	// Get current permissions
+	currentMode := info.Mode().Perm()
+
+	// Check if permissions need fixing (should be 0600 or 0400)
+	needsFix := currentMode != 0600 && currentMode != 0400
+
+	if needsFix {
+		// Fix permissions
+		if err := os.Chmod(keyPath, 0600); err != nil {
+			if !platform.IsWindows() {
+				return false, fmt.Errorf("failed to fix permissions: %w", err)
+			}
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// TestConnection tests SSH connection to a host (uses default SSH key)
 func TestConnection(host string) (bool, string, error) {
+	return TestConnectionWithKey(host, "")
+}
+
+// FixAllKeyPermissions fixes permissions for all SSH keys in ~/.ssh directory
+func FixAllKeyPermissions() (int, error) {
+	keys, err := ListPrivateKeys()
+	if err != nil {
+		return 0, err
+	}
+
+	fixed := 0
+	for _, key := range keys {
+		// Use ForceFixKeyPermissions for more reliable permission fixing
+		if ForceFixKeyPermissions(key) {
+			fixed++
+		}
+	}
+
+	return fixed, nil
+}
+
+// ForceFixKeyPermissions uses chmod command to fix permissions (more reliable)
+func ForceFixKeyPermissions(keyPath string) bool {
+	keyPath = platform.ExpandPath(keyPath)
+
+	// Check if file exists
+	if _, err := os.Stat(keyPath); err != nil {
+		return false
+	}
+
+	// Use chmod command directly for more reliable permission fixing
+	if !platform.IsWindows() {
+		// Fix private key permissions (600)
+		shell.Exec("chmod", "600", keyPath)
+
+		// Fix public key permissions (644) if exists
+		pubPath := keyPath + ".pub"
+		if platform.FileExists(pubPath) {
+			shell.Exec("chmod", "644", pubPath)
+		}
+		return true
+	}
+
+	// On Windows, use os.Chmod (may not work perfectly but try anyway)
+	os.Chmod(keyPath, 0600)
+	pubPath := keyPath + ".pub"
+	if platform.FileExists(pubPath) {
+		os.Chmod(pubPath, 0644)
+	}
+	return true
+}
+
+// EnsureSSHDirPermissions ensures ~/.ssh directory and config have correct permissions
+func EnsureSSHDirPermissions() {
+	sshDir := platform.GetSSHDir()
+
+	if !platform.IsWindows() {
+		// Fix SSH directory permissions (700)
+		shell.Exec("chmod", "700", sshDir)
+
+		// Fix SSH config permissions (600) if exists
+		configPath := sshDir + "/config"
+		if platform.FileExists(configPath) {
+			shell.Exec("chmod", "600", configPath)
+		}
+	}
+}
+
+// TestConnectionWithKey tests SSH connection to a host using a specific SSH key
+func TestConnectionWithKey(host, keyPath string) (bool, string, error) {
 	if host == "" {
 		host = "github.com"
 	}
+
+	// First, fix permissions for ALL SSH keys to avoid "bad permissions" errors
+	// This is critical because SSH will scan all keys and fail if any has bad permissions
+	FixAllKeyPermissions()
+
+	// Also ensure SSH directory and config have correct permissions
+	EnsureSSHDirPermissions()
 
 	args := []string{
 		"-T",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ConnectTimeout=10",
 		"-o", "BatchMode=yes",
-		fmt.Sprintf("git@%s", host),
+		"-o", "LogLevel=ERROR", // Suppress warnings
 	}
+
+	// If keyPath is provided, use it exclusively
+	if keyPath != "" {
+		keyPath = platform.ExpandPath(keyPath)
+
+		// Force fix permissions using chmod command (more reliable than os.Chmod)
+		ForceFixKeyPermissions(keyPath)
+
+		// IMPORTANT: These options ensure ONLY the specified key is used
+		// -F /dev/null - Ignore SSH config file completely (Linux/Mac)
+		// -F NUL - Ignore SSH config file completely (Windows)
+		// IdentitiesOnly=yes - Only use identities specified on command line
+		// IdentityAgent=none - Disable ssh-agent to prevent using other keys
+		if platform.IsWindows() {
+			args = append(args, "-F", "NUL")
+		} else {
+			args = append(args, "-F", "/dev/null")
+		}
+		args = append(args, "-o", "IdentitiesOnly=yes")
+		args = append(args, "-o", "IdentityAgent=none") // Disable ssh-agent
+		args = append(args, "-i", keyPath)
+	}
+
+	args = append(args, fmt.Sprintf("git@%s", host))
 
 	output, err := shell.Exec("ssh", args...)
 
@@ -195,11 +326,11 @@ func ListPrivateKeys() ([]string, error) {
 	}
 
 	excludeFiles := map[string]bool{
-		"known_hosts":       true,
-		"known_hosts.old":   true,
-		"config":            true,
-		"authorized_keys":   true,
-		"authorized_keys2":  true,
+		"known_hosts":      true,
+		"known_hosts.old":  true,
+		"config":           true,
+		"authorized_keys":  true,
+		"authorized_keys2": true,
 	}
 
 	var keys []string

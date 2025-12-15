@@ -50,6 +50,9 @@ Download from [GitHub Releases](https://github.com/dwirx/ghex/releases):
 - 📁 **Per-Repository Config** - Different accounts for different repos
 - 📦 **Git Clone Integration** - Clone with account selection
 - 🏥 **Health Check** - Verify all account connections
+- 🌐 **Global SSH Switch** - Change default SSH key for platforms
+- 🧪 **Connection Testing** - Test SSH/Token authentication with detailed feedback
+- 🎯 **Multi-Platform** - GitHub, GitLab, Bitbucket, Gitea support
 
 ### Universal Downloader (dlx)
 - 📥 **Any URL Download** - Download files from any HTTP/HTTPS URL
@@ -59,9 +62,10 @@ Download from [GitHub Releases](https://github.com/dwirx/ghex/releases):
 - 📋 **Batch Download** - Download from URL list file
 
 ### Other Features
-- 🎨 **Beautiful Terminal UI** - Colorful and intuitive interface
+- 🎨 **Beautiful Terminal UI** - Colorful and intuitive interface with keyboard navigation (↑/k ↓/j)
 - ⚡ **Single Binary** - No runtime dependencies
 - 🖥️ **Cross-Platform** - Windows, Linux, macOS support
+- 📜 **Activity Log** - Track account switches and operations
 
 ## 🛠️ Commands
 
@@ -91,6 +95,8 @@ ghex ssh import       # Import existing SSH key
 ghex ssh test         # Test SSH connection
 ghex ssh global       # Switch SSH globally
 ghex ssh list         # List SSH keys
+ghex global-ssh       # Quick switch SSH globally
+ghex test             # Test connection (SSH/Token)
 ```
 
 ### Download (dlx)
