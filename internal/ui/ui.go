@@ -7,14 +7,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ASCII art title for GHE
+// ASCII art title for GHEX
 const asciiTitle = `
-  ██████╗ ██╗  ██╗███████╗
- ██╔════╝ ██║  ██║██╔════╝
- ██║  ███╗███████║█████╗  
- ██║   ██║██╔══██║██╔══╝  
- ╚██████╔╝██║  ██║███████╗
-  ╚═════╝ ╚═╝  ╚═╝╚══════╝`
+  ██████╗ ██╗  ██╗███████╗██╗  ██╗
+ ██╔════╝ ██║  ██║██╔════╝╚██╗██╔╝
+ ██║  ███╗███████║█████╗   ╚███╔╝ 
+ ██║   ██║██╔══██║██╔══╝   ██╔██╗ 
+ ╚██████╔╝██║  ██║███████╗██╔╝ ██╗
+  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝`
 
 // ShowTitle displays the application title
 func ShowTitle() {
@@ -27,7 +27,7 @@ func ShowTitle() {
 			fmt.Println(SecondaryStyle.Render(line))
 		}
 	}
-	fmt.Println(MutedStyle.Render("✨ Beautiful GitHub Account Switcher ✨"))
+	fmt.Println(MutedStyle.Render("✨ GitHub Account Switcher & Universal Downloader ✨"))
 	fmt.Println()
 }
 

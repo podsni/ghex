@@ -22,6 +22,8 @@ build/
 dist/
 
 # Binary executables
+ghex
+ghex.exe
 ghe
 ghe.exe
 
