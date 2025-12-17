@@ -79,6 +79,17 @@ func runUpdate() {
 		return
 	}
 
+	// Check permissions before asking for confirmation
+	permErr, err := update.CheckUpdatePermissions()
+	if err != nil {
+		ui.ShowError(fmt.Sprintf("Failed to check permissions: %v", err))
+		return
+	}
+	if permErr != nil {
+		ui.ShowError(permErr.Instruction)
+		return
+	}
+
 	// Confirm update
 	if !updateForce && !updateYes {
 		fmt.Print("Do you want to update? [y/N]: ")
@@ -120,6 +131,17 @@ func runRollback() {
 
 	if !updater.HasBackup() {
 		ui.ShowError("No backup available for rollback")
+		return
+	}
+
+	// Check permissions before rollback
+	permErr, err := update.CheckUpdatePermissions()
+	if err != nil {
+		ui.ShowError(fmt.Sprintf("Failed to check permissions: %v", err))
+		return
+	}
+	if permErr != nil {
+		ui.ShowError(permErr.Instruction)
 		return
 	}
 

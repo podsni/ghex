@@ -117,7 +117,14 @@ func (m *BinaryManager) Replace(newBinaryPath string) error {
 }
 
 // replaceUnix handles binary replacement on Unix systems
+// Linux doesn't allow writing to a running executable ("text file busy" error)
+// Solution: remove the old file first, then copy the new one
 func (m *BinaryManager) replaceUnix(newBinaryPath string) error {
+	// Remove the current binary first (this is allowed even while running)
+	if err := os.Remove(m.BinaryPath); err != nil {
+		return fmt.Errorf("failed to remove current binary: %w", err)
+	}
+
 	// Copy new binary to destination
 	if err := copyFile(newBinaryPath, m.BinaryPath); err != nil {
 		return fmt.Errorf("failed to replace binary: %w", err)
