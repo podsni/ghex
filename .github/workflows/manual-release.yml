@@ -4,20 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.0.0, 1.1.0-beta.1)'
+        description: 'Version (e.g., 1.2.0 or 1.2.0-beta.1)'
         required: true
         type: string
-      release_type:
-        description: 'Release type'
-        required: true
-        type: choice
-        options:
-          - stable
-          - beta
-          - alpha
-        default: stable
+      prerelease:
+        description: 'Pre-release?'
+        required: false
+        type: boolean
+        default: false
       changelog:
-        description: 'Changelog (what changed in this release)'
+        description: 'What changed in this release'
         required: true
         type: string
 
@@ -25,192 +21,109 @@ permissions:
   contents: write
 
 jobs:
-  validate:
-    name: Validate Input
+  release:
+    name: Build and Release
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.tag.outputs.tag }}
-      prerelease: ${{ steps.tag.outputs.prerelease }}
-    steps:
-      - name: Validate version format
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          # Allow formats: 1.0.0, 1.0.0-beta.1, 1.0.0-rc.1, etc.
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "Error: Version must be in format X.Y.Z or X.Y.Z-suffix (e.g., 1.0.0, 1.0.0-beta.1)"
-            exit 1
-          fi
-
-      - name: Generate tag
-        id: tag
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          TYPE="${{ github.event.inputs.release_type }}"
-          
-          # If version already has suffix, use it directly
-          if [[ "$VERSION" =~ - ]]; then
-            TAG="v${VERSION}"
-            PRERELEASE="true"
-          else
-            case $TYPE in
-              stable)
-                TAG="v${VERSION}"
-                PRERELEASE="false"
-                ;;
-              beta)
-                TAG="v${VERSION}-beta"
-                PRERELEASE="true"
-                ;;
-              alpha)
-                TAG="v${VERSION}-alpha"
-                PRERELEASE="true"
-                ;;
-            esac
-          fi
-          
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "prerelease=${PRERELEASE}" >> $GITHUB_OUTPUT
-          echo "Tag: ${TAG}, Prerelease: ${PRERELEASE}"
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    needs: validate
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+
+      - name: Validate version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Error: Invalid version format. Use X.Y.Z or X.Y.Z-suffix"
+            exit 1
+          fi
 
       - name: Run tests
         run: go test -v ./...
 
-  build:
-    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ubuntu-latest
-    needs: [validate, test]
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            ext: ""
-          - goos: linux
-            goarch: arm64
-            ext: ""
-          - goos: darwin
-            goarch: amd64
-            ext: ""
-          - goos: darwin
-            goarch: arm64
-            ext: ""
-          - goos: windows
-            goarch: amd64
-            ext: ".exe"
-          - goos: windows
-            goarch: arm64
-            ext: ".exe"
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
+      - name: Build all platforms
         run: |
-          TAG="${{ needs.validate.outputs.tag }}"
-          VERSION="${TAG#v}"
-          BINARY="ghex${{ matrix.ext }}"
+          VERSION="${{ github.event.inputs.version }}"
           
-          go build -ldflags="-s -w -X main.Version=${VERSION}" \
-            -o ${BINARY} ./cmd/ghex
+          platforms=(
+            "linux amd64"
+            "linux arm64"
+            "darwin amd64"
+            "darwin arm64"
+            "windows amd64"
+            "windows arm64"
+          )
           
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip ghex-${{ matrix.goos }}-${{ matrix.goarch }}.zip ${BINARY} README.md LICENSE
-          else
-            tar -czvf ghex-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ${BINARY} README.md LICENSE
-          fi
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ghex-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ghex-${{ matrix.goos }}-${{ matrix.goarch }}.*
-
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [validate, build]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
+          mkdir -p dist
+          
+          for platform in "${platforms[@]}"; do
+            read -r GOOS GOARCH <<< "$platform"
+            
+            EXT=""
+            ARCHIVE_EXT=".tar.gz"
+            if [ "$GOOS" = "windows" ]; then
+              EXT=".exe"
+              ARCHIVE_EXT=".zip"
+            fi
+            
+            BINARY="ghex${EXT}"
+            ARCHIVE="ghex-${GOOS}-${GOARCH}${ARCHIVE_EXT}"
+            
+            echo "Building ${GOOS}/${GOARCH}..."
+            
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="-s -w -X main.Version=${VERSION}" \
+              -o ${BINARY} ./cmd/ghex
+            
+            if [ "$GOOS" = "windows" ]; then
+              zip dist/${ARCHIVE} ${BINARY} README.md LICENSE
+            else
+              tar -czvf dist/${ARCHIVE} ${BINARY} README.md LICENSE
+            fi
+            
+            rm ${BINARY}
+          done
+          
+          # Generate checksums
+          cd dist
           sha256sum ghex-* > checksums.txt
           cat checksums.txt
 
-      - name: Create release body
+      - name: Create release notes
         run: |
-          TAG="${{ needs.validate.outputs.tag }}"
-          TYPE="${{ github.event.inputs.release_type }}"
-          
-          cat > release-body.md << 'EOF'
-          # GHEX ${{ needs.validate.outputs.tag }}
-          
-          **Release Type:** ${{ github.event.inputs.release_type }}
-          
+          cat > RELEASE_NOTES.md << 'ENDOFFILE'
           ## What's Changed
           
           ${{ github.event.inputs.changelog }}
           
           ## Installation
           
-          ### Quick Install (Recommended)
+          ### Quick Install
           
           **Linux/macOS:**
           ```bash
-          curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | bash
+          curl -sSL https://raw.githubusercontent.com/dwirx/ghex/main/scripts/install.sh | bash
           ```
           
           **Windows (PowerShell):**
           ```powershell
-          iwr -useb https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.ps1 | iex
+          iwr -useb https://raw.githubusercontent.com/dwirx/ghex/main/scripts/install.ps1 | iex
           ```
           
           ### Manual Download
           
-          **Linux (x64):**
-          ```bash
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/ghex-linux-amd64.tar.gz
-          tar -xzf ghex-linux-amd64.tar.gz
-          sudo mv ghex /usr/local/bin/
-          chmod +x /usr/local/bin/ghex
-          ```
-          
-          **macOS (Apple Silicon):**
-          ```bash
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/ghex-darwin-arm64.tar.gz
-          tar -xzf ghex-darwin-arm64.tar.gz
-          sudo mv ghex /usr/local/bin/
-          ```
-          
-          **Windows:**
-          Download `ghex-windows-amd64.zip` from assets below and add to PATH.
+          | Platform | Download |
+          |----------|----------|
+          | Linux x64 | `ghex-linux-amd64.tar.gz` |
+          | Linux ARM64 | `ghex-linux-arm64.tar.gz` |
+          | macOS Intel | `ghex-darwin-amd64.tar.gz` |
+          | macOS Apple Silicon | `ghex-darwin-arm64.tar.gz` |
+          | Windows x64 | `ghex-windows-amd64.zip` |
+          | Windows ARM64 | `ghex-windows-arm64.zip` |
           
           ### Self-Update
           
@@ -221,18 +134,18 @@ jobs:
           
           ## Checksums
           
-          See `checksums.txt` for SHA256 checksums of all binaries.
-          EOF
+          See `checksums.txt` for SHA256 checksums.
+          ENDOFFILE
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.validate.outputs.tag }}
-          name: GHEX ${{ needs.validate.outputs.tag }}
-          body_path: release-body.md
+          tag_name: v${{ github.event.inputs.version }}
+          name: GHEX v${{ github.event.inputs.version }}
+          body_path: RELEASE_NOTES.md
           draft: false
-          prerelease: ${{ needs.validate.outputs.prerelease }}
+          prerelease: ${{ github.event.inputs.prerelease }}
           files: |
-            artifacts/*
+            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

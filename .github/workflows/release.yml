@@ -4,176 +4,133 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., v1.0.0)'
-        required: true
-        type: string
-      prerelease:
-        description: 'Is this a pre-release?'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Create Release
+  build-and-release:
+    name: Build and Release
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}"
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          
-          # Get previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
-          echo "## What's Changed in ${VERSION}" > CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          
-          if [ -n "$PREV_TAG" ]; then
-            echo "### Commits since ${PREV_TAG}" >> CHANGELOG.md
-            git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG.md
-          else
-            echo "### All Commits" >> CHANGELOG.md
-            git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
-          fi
-          
-          echo "" >> CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}" >> CHANGELOG.md
-          
-          cat CHANGELOG.md
-
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: GHEX ${{ steps.version.outputs.version }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ github.event.inputs.prerelease || false }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build:
-    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ubuntu-latest
-    needs: release
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            ext: ""
-          - goos: linux
-            goarch: arm64
-            ext: ""
-          - goos: darwin
-            goarch: amd64
-            ext: ""
-          - goos: darwin
-            goarch: arm64
-            ext: ""
-          - goos: windows
-            goarch: amd64
-            ext: ".exe"
-          - goos: windows
-            goarch: arm64
-            ext: ".exe"
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
+      - name: Get version
+        id: version
         run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          BINARY_NAME="ghex-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          
-          go build -ldflags="-s -w -X main.Version=${VERSION}" \
-            -o ${BINARY_NAME} ./cmd/ghex
-          
-          # Create archive
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip ghex-${{ matrix.goos }}-${{ matrix.goarch }}.zip ${BINARY_NAME} README.md LICENSE
-          else
-            tar -czvf ghex-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ${BINARY_NAME} README.md LICENSE
-          fi
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
 
-      - name: Upload Release Asset
+      - name: Build all platforms
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NUM="${VERSION#v}"
+          
+          platforms=(
+            "linux amd64"
+            "linux arm64"
+            "darwin amd64"
+            "darwin arm64"
+            "windows amd64"
+            "windows arm64"
+          )
+          
+          mkdir -p dist
+          
+          for platform in "${platforms[@]}"; do
+            read -r GOOS GOARCH <<< "$platform"
+            
+            EXT=""
+            ARCHIVE_EXT=".tar.gz"
+            if [ "$GOOS" = "windows" ]; then
+              EXT=".exe"
+              ARCHIVE_EXT=".zip"
+            fi
+            
+            BINARY="ghex${EXT}"
+            ARCHIVE="ghex-${GOOS}-${GOARCH}${ARCHIVE_EXT}"
+            
+            echo "Building ${GOOS}/${GOARCH}..."
+            
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="-s -w -X main.Version=${VERSION_NUM}" \
+              -o ${BINARY} ./cmd/ghex
+            
+            if [ "$GOOS" = "windows" ]; then
+              zip dist/${ARCHIVE} ${BINARY} README.md LICENSE
+            else
+              tar -czvf dist/${ARCHIVE} ${BINARY} README.md LICENSE
+            fi
+            
+            rm ${BINARY}
+          done
+          
+          # Generate checksums
+          cd dist
+          sha256sum ghex-* > checksums.txt
+          cat checksums.txt
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          cat > RELEASE_NOTES.md << EOF
+          ## What's Changed
+          
+          EOF
+          
+          if [ -n "$PREV_TAG" ]; then
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> RELEASE_NOTES.md
+          else
+            git log --pretty=format:"- %s" -10 >> RELEASE_NOTES.md
+          fi
+          
+          cat >> RELEASE_NOTES.md << 'EOF'
+          
+          ## Installation
+          
+          ### Quick Install
+          
+          **Linux/macOS:**
+          ```bash
+          curl -sSL https://raw.githubusercontent.com/dwirx/ghex/main/scripts/install.sh | bash
+          ```
+          
+          **Windows (PowerShell):**
+          ```powershell
+          iwr -useb https://raw.githubusercontent.com/dwirx/ghex/main/scripts/install.ps1 | iex
+          ```
+          
+          ### Self-Update
+          
+          If you already have ghex installed:
+          ```bash
+          ghex update
+          ```
+          
+          ## Checksums
+          
+          See `checksums.txt` for SHA256 checksums.
+          EOF
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.release.outputs.version }}
+          name: GHEX ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
-            ghex-${{ matrix.goos }}-${{ matrix.goarch }}.*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  checksums:
-    name: Generate Checksums
-    runs-on: ubuntu-latest
-    needs: [release, build]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p release-assets
-          # Wait for assets to be available
-          sleep 30
-          gh release download ${{ needs.release.outputs.version }} \
-            --repo ${{ github.repository }} \
-            --dir release-assets \
-            --pattern "ghex-*" || true
-
-      - name: Generate checksums
-        run: |
-          cd release-assets
-          if ls ghex-* 1> /dev/null 2>&1; then
-            sha256sum ghex-* > checksums.txt
-            cat checksums.txt
-          else
-            echo "No assets found to checksum"
-            exit 1
-          fi
-
-      - name: Upload checksums
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ needs.release.outputs.version }}
-          files: release-assets/checksums.txt
+            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
