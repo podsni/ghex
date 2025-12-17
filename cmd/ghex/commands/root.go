@@ -43,6 +43,9 @@ func NewRootCmd() *cobra.Command {
 	// Download commands (dlx)
 	rootCmd.AddCommand(NewDlxCmd())
 
+	// Update command
+	rootCmd.AddCommand(NewUpdateCmd())
+
 	// Git shortcuts
 	AddGitShortcuts(rootCmd)
 
