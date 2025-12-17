@@ -11,7 +11,7 @@ import (
 )
 
 // Version is set during build
-var Version = "1.0.0"
+var Version = "0.0.3"
 
 // NewRootCmd creates the root command
 func NewRootCmd() *cobra.Command {

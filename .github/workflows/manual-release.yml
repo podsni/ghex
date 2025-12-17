@@ -37,10 +37,13 @@ jobs:
       - name: Validate version
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "Error: Invalid version format. Use X.Y.Z or X.Y.Z-suffix"
+            echo "Error: Invalid version format. Use X.Y.Z or X.Y.Z-suffix (e.g., 0.0.3, 1.2.0-beta.1)"
             exit 1
           fi
+          echo "Valid version: ${VERSION}"
 
       - name: Run tests
         run: go test -v ./...
@@ -48,6 +51,8 @@ jobs:
       - name: Build all platforms
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
           
           platforms=(
             "linux amd64"
@@ -137,11 +142,18 @@ jobs:
           See `checksums.txt` for SHA256 checksums.
           ENDOFFILE
 
+      - name: Set version output
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: GHEX v${{ github.event.inputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: GHEX v${{ steps.version.outputs.version }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: ${{ github.event.inputs.prerelease }}
