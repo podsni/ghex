@@ -10,6 +10,11 @@
 
 # Output of the go coverage tool
 *.out
+*.cover
+*.coverprofile
+*.prof
+*.pprof
+coverage/
 
 # Dependency directories
 vendor/
@@ -21,12 +26,13 @@ go.work
 build/
 dist/
 
-# Binary executables
-ghex
-ghex.exe
-ghe
-ghe.exe
-ghex_new
+# Local binary executables
+/ghex
+/ghex.exe
+/ghex_new
+/ghex_test*
+/ghe
+/ghe.exe
 
 # IDE and editor files
 .idea/
@@ -34,11 +40,11 @@ ghex_new
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Environment files
 .env
 .env.local
+.env.*
 
 # Log files
 *.log
