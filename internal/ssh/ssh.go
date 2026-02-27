@@ -24,9 +24,10 @@ func GenerateKey(keyPath, comment string) error {
 	}
 
 	// Generate key using ssh-keygen
+	// Use ToSSHPath to convert Windows backslashes to forward slashes for SSH compatibility
 	args := []string{
 		"-t", "ed25519",
-		"-f", keyPath,
+		"-f", platform.ToSSHPath(keyPath),
 		"-C", comment,
 		"-N", "", // Empty passphrase
 		"-q",    // Quiet mode to prevent interactive prompts
@@ -93,7 +94,8 @@ func EnsurePublicKey(privateKeyPath string) (string, error) {
 	}
 
 	// Generate public key from private key
-	output, err := shell.Run("ssh-keygen", "-y", "-f", privateKeyPath)
+	// Use ToSSHPath to convert Windows backslashes to forward slashes for SSH compatibility
+	output, err := shell.Run("ssh-keygen", "-y", "-f", platform.ToSSHPath(privateKeyPath))
 	if err != nil {
 		return "", fmt.Errorf("failed to generate public key: %w", err)
 	}
@@ -277,7 +279,8 @@ func TestConnectionWithKey(host, keyPath string) (bool, string, error) {
 		args = append(args, "-F", nullDevice)
 		args = append(args, "-o", "IdentitiesOnly=yes")
 		args = append(args, "-o", "IdentityAgent=none") // Disable ssh-agent
-		args = append(args, "-i", keyPath)
+		// Use ToSSHPath to convert Windows backslashes to forward slashes for SSH compatibility
+		args = append(args, "-i", platform.ToSSHPath(keyPath))
 	}
 
 	args = append(args, fmt.Sprintf("git@%s", host))

@@ -68,6 +68,13 @@ func NormalizePath(path string) string {
 	return filepath.Clean(path)
 }
 
+// ToSSHPath converts a file path to a format compatible with SSH commands on all platforms.
+// On Windows, backslashes are replaced with forward slashes since SSH (OpenSSH/Git Bash)
+// requires POSIX-style paths for -i and -f arguments.
+func ToSSHPath(path string) string {
+	return strings.ReplaceAll(path, "\\", "/")
+}
+
 // ExpandPath expands environment variables and tilde in a path
 func ExpandPath(path string) string {
 	if path == "" {

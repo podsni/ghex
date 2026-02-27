@@ -15,8 +15,17 @@ func NewDlxCmd() *cobra.Command {
 	dlxCmd := &cobra.Command{
 		Use:   "dlx [url]",
 		Short: "Universal file downloader",
-		Long:  "Download files from any URL (HTTP/HTTPS) or Git repositories",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Download files from any URL (HTTP/HTTPS) or GitHub repositories.
+
+GitHub URL formats supported:
+  File:   https://github.com/{owner}/{repo}/blob/{branch}/{path}
+  Folder: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+
+Examples:
+  ghex dlx https://github.com/user/repo/blob/main/README.md
+  ghex dlx https://github.com/user/repo/tree/main/src/
+  ghex dlx https://example.com/file.tar.gz`,
+		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) > 0 {
 				output, _ := cmd.Flags().GetString("output")
@@ -24,6 +33,17 @@ func NewDlxCmd() *cobra.Command {
 				overwrite, _ := cmd.Flags().GetBool("overwrite")
 				showInfo, _ := cmd.Flags().GetBool("info")
 
+				rawURL := args[0]
+
+				// Auto-detect GitHub URLs and route to the appropriate downloader
+				if isGitHubURL(rawURL) {
+					if err := runGitHubDownload(rawURL, output, outputDir, showInfo); err != nil {
+						ui.ShowError(err.Error())
+					}
+					return
+				}
+
+				// Generic HTTP/HTTPS download
 				opts := download.Options{
 					Output:          output,
 					OutputDir:       outputDir,
@@ -32,7 +52,9 @@ func NewDlxCmd() *cobra.Command {
 					ShowInfo:        showInfo,
 					FollowRedirects: true,
 				}
-				_ = download.FromURL(args[0], opts)
+				if err := download.FromURL(rawURL, opts); err != nil {
+					ui.ShowError(err.Error())
+				}
 			} else {
 				runDlxMenu()
 			}
@@ -152,6 +174,53 @@ func newDlxListCmd() *cobra.Command {
 			}
 		},
 	}
+}
+
+// isGitHubURL returns true if the URL is a GitHub repository URL.
+func isGitHubURL(url string) bool {
+	return strings.HasPrefix(url, "https://github.com/") ||
+		strings.HasPrefix(url, "http://github.com/")
+}
+
+// runGitHubDownload auto-detects whether the GitHub URL points to a file (blob)
+// or a directory (tree) and downloads accordingly.
+func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
+	isTree := strings.Contains(rawURL, "/tree/")
+	isBlob := strings.Contains(rawURL, "/blob/")
+
+	if isBlob {
+		// Single file download
+		if showInfo {
+			ui.ShowInfo(fmt.Sprintf("Downloading file from GitHub: %s", rawURL))
+		}
+		opts := download.GitOptions{
+			Output:    output,
+			OutputDir: outputDir,
+		}
+		return download.GitFile(rawURL, opts)
+	}
+
+	if isTree {
+		// Directory download
+		if showInfo {
+			ui.ShowInfo(fmt.Sprintf("Downloading directory from GitHub: %s", rawURL))
+		}
+		opts := download.GitOptions{
+			OutputDir: outputDir,
+			Depth:     10,
+		}
+		return download.GitDirectory(rawURL, opts)
+	}
+
+	// Repo root or unknown GitHub URL — treat as directory download
+	if showInfo {
+		ui.ShowInfo(fmt.Sprintf("Downloading from GitHub: %s", rawURL))
+	}
+	opts := download.GitOptions{
+		OutputDir: outputDir,
+		Depth:     10,
+	}
+	return download.GitDirectory(rawURL, opts)
 }
 
 func downloadFromFileList(filePath string) error {
