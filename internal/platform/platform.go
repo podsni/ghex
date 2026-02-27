@@ -2,6 +2,7 @@ package platform
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 )
 
@@ -54,9 +55,13 @@ func DetectShell() string {
 		if os.Getenv("PSModulePath") != "" {
 			return "powershell"
 		}
-		// Check for Git Bash or WSL
+		// Check for Git Bash or MSYS2 (MSYSTEM is set to MINGW64, MINGW32, MSYS, etc.)
+		if os.Getenv("MSYSTEM") != "" {
+			return "bash"
+		}
+		// Check for Git Bash via SHELL env var
 		if shell := os.Getenv("SHELL"); shell != "" {
-			return shell
+			return filepath.Base(shell)
 		}
 		return "cmd"
 	}
@@ -66,5 +71,5 @@ func DetectShell() string {
 	if shell == "" {
 		return "bash"
 	}
-	return shell
+	return filepath.Base(shell)
 }

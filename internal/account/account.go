@@ -2,6 +2,7 @@ package account
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -119,6 +120,9 @@ func (m *Manager) Switch(accountName string, method SwitchMethod, repoPath strin
 
 		// Ensure SSH key permissions
 		keyPath := platform.ExpandPath(account.SSH.KeyPath)
+		if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+			return fmt.Errorf("SSH key not found at path: %s", keyPath)
+		}
 		if err := ssh.SetKeyPermissions(keyPath); err != nil {
 			return fmt.Errorf("failed to set SSH key permissions: %w", err)
 		}

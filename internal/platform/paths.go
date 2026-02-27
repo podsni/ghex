@@ -9,7 +9,10 @@ import (
 // GetHomeDir returns the user's home directory
 func GetHomeDir() string {
 	if IsWindows() {
-		// On Windows, prefer USERPROFILE
+		// Git Bash sets HOME to Unix-style path; prefer it over USERPROFILE
+		if home := os.Getenv("HOME"); home != "" {
+			return home
+		}
 		if home := os.Getenv("USERPROFILE"); home != "" {
 			return home
 		}
@@ -84,10 +87,10 @@ func ExpandPath(path string) string {
 
 	// Expand environment variables
 	if IsWindows() {
-		// Windows: %VAR%
-		path = os.Expand(path, func(key string) string {
-			return os.Getenv(key)
-		})
+		// Handle %VAR% style (Windows-native)
+		path = expandWindowsEnvVars(path)
+		// Also handle $VAR style (for Git Bash compatibility)
+		path = os.ExpandEnv(path)
 	} else {
 		// Unix: $VAR or ${VAR}
 		path = os.ExpandEnv(path)
@@ -96,9 +99,36 @@ func ExpandPath(path string) string {
 	return path
 }
 
+// expandWindowsEnvVars expands %VAR% style environment variables
+func expandWindowsEnvVars(path string) string {
+	result := path
+	offset := 0
+	for {
+		start := strings.Index(result[offset:], "%")
+		if start == -1 {
+			break
+		}
+		start += offset
+		end := strings.Index(result[start+1:], "%")
+		if end == -1 {
+			break
+		}
+		end = start + 1 + end
+		key := result[start+1 : end]
+		if val := os.Getenv(key); val != "" {
+			result = result[:start] + val + result[end+1:]
+			// Don't advance offset - the replacement may contain more vars
+		} else {
+			// Skip past this %VAR% to avoid infinite loop on unknown vars
+			offset = end + 1
+		}
+	}
+	return result
+}
+
 // EnsureDir creates a directory if it doesn't exist
 func EnsureDir(path string, perm os.FileMode) error {
-	if path == "" || path == "." || path == "./" {
+	if path == "" || path == "." || path == "./" || path == ".\\" {
 		return nil
 	}
 

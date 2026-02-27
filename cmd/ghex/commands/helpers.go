@@ -3,10 +3,10 @@ package commands
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/dwirx/ghex/internal/config"
 	"github.com/dwirx/ghex/internal/git"
+	"github.com/dwirx/ghex/internal/platform"
 	"github.com/dwirx/ghex/internal/ssh"
 	"github.com/dwirx/ghex/internal/ui"
 )
@@ -67,11 +67,7 @@ func GetPlatformInfo(acc *config.Account) PlatformInfo {
 
 // ExpandKeyPath expands ~ in key path to home directory
 func ExpandKeyPath(keyPath string) string {
-	if strings.HasPrefix(keyPath, "~") {
-		home, _ := os.UserHomeDir()
-		return strings.Replace(keyPath, "~", home, 1)
-	}
-	return keyPath
+	return platform.ExpandPath(keyPath)
 }
 
 // TestAccountSSH tests SSH connection for an account and shows result
@@ -139,12 +135,12 @@ func TestAccountToken(acc *config.Account, showDetails bool) bool {
 		return false
 	}
 
-	platform := GetPlatformInfo(acc)
+	platformInfo := GetPlatformInfo(acc)
 
 	spinner := ui.NewSpinner("Testing token authentication...")
 	spinner.Start()
 
-	ok, msg, _ := git.TestTokenAuth(acc.Token.Username, acc.Token.Token)
+	ok, msg, _ := git.TestTokenAuthForHost(acc.Token.Username, acc.Token.Token, platformInfo.Host)
 	if ok {
 		spinner.StopWithSuccess("✓ Token authentication test passed!")
 		if showDetails {
@@ -159,7 +155,7 @@ func TestAccountToken(acc *config.Account, showDetails bool) bool {
 		ui.ShowInfo("• Token has not expired")
 		ui.ShowInfo("• Token has correct permissions (repo access)")
 		ui.ShowInfo("• Username is correct")
-		ui.ShowInfo(fmt.Sprintf("\nCreate a new token at: %s", platform.TokenURL))
+		ui.ShowInfo(fmt.Sprintf("\nCreate a new token at: %s", platformInfo.TokenURL))
 		if msg != "" {
 			fmt.Println(ui.Muted(fmt.Sprintf("\nDetails: %s", msg)))
 		}

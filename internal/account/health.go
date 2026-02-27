@@ -88,12 +88,15 @@ func CheckSSHKeyHealth(keyPath string) HealthIndicators {
 	}
 
 	// Check file permissions (should not be world-readable)
-	mode := info.Mode()
-	if mode&0077 != 0 {
-		// File has group or world permissions - potentially insecure but still valid
-		valid := true
-		indicators.SSHKeyValid = &valid
-		return indicators
+	// On Windows, permission bits are meaningless (always return 0666/0777)
+	if !platform.IsWindows() {
+		mode := info.Mode()
+		if mode&0077 != 0 {
+			// File has group or world permissions - potentially insecure but still valid
+			valid := true
+			indicators.SSHKeyValid = &valid
+			return indicators
+		}
 	}
 
 	valid := true

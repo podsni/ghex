@@ -132,14 +132,14 @@ func (m *Manager) DetectActive(repoPath string) (string, error) {
 		// Check git identity match
 		if account.GitUserName != "" {
 			totalChecks++
-			if userName == account.GitUserName {
+			if strings.EqualFold(userName, account.GitUserName) {
 				matches++
 			}
 		}
 
 		if account.GitEmail != "" {
 			totalChecks++
-			if userEmail == account.GitEmail {
+			if strings.EqualFold(userEmail, account.GitEmail) {
 				matches++
 			}
 		}

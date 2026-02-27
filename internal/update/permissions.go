@@ -105,8 +105,12 @@ func isSystemPath(path string) bool {
 // IsRunningAsRoot checks if the current process is running as root/admin
 func IsRunningAsRoot() bool {
 	if runtime.GOOS == "windows" {
-		// On Windows, check if running as administrator
-		// This is a simplified check
+		// Try to open a system device that requires admin access
+		f, err := os.Open("\\\\.\\PHYSICALDRIVE0")
+		if err == nil {
+			f.Close()
+			return true
+		}
 		return false
 	}
 
@@ -116,7 +120,13 @@ func IsRunningAsRoot() bool {
 // GetSuggestedInstallPath returns a suggested path for user installation
 func GetSuggestedInstallPath() string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "ghex")
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			// Fallback if LOCALAPPDATA is not set
+			homeDir, _ := os.UserHomeDir()
+			localAppData = filepath.Join(homeDir, "AppData", "Local")
+		}
+		return filepath.Join(localAppData, "Programs", "ghex")
 	}
 
 	homeDir, _ := os.UserHomeDir()

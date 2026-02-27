@@ -42,7 +42,7 @@ function Write-ErrorMsg {
     param([string]$Message)
     Write-Host "[ERROR] " -ForegroundColor Red -NoNewline
     Write-Host $Message
-    exit 1
+    throw $Message
 }
 
 function Get-Architecture {
@@ -158,4 +158,9 @@ function Main {
 }
 
 # Run main
-Main -Version $args[0]
+try {
+    Main -Version $args[0]
+} catch {
+    Write-Host "[ERROR] $_" -ForegroundColor Red
+    exit 1
+}

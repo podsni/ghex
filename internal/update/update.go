@@ -167,7 +167,7 @@ func (u *Updater) extractTarGz(archivePath, destDir string) (string, error) {
 
 		// Look for the binary file
 		baseName := filepath.Base(header.Name)
-		if baseName == binaryName || baseName == u.BinaryName {
+		if baseName == binaryName {
 			destPath := filepath.Join(destDir, binaryName)
 			outFile, err := os.Create(destPath)
 			if err != nil {
@@ -202,7 +202,7 @@ func (u *Updater) extractZip(archivePath, destDir string) (string, error) {
 
 	for _, f := range r.File {
 		baseName := filepath.Base(f.Name)
-		if baseName == binaryName || baseName == u.BinaryName+".exe" {
+		if baseName == binaryName {
 			rc, err := f.Open()
 			if err != nil {
 				return "", fmt.Errorf("%w: %v", ErrExtractFailed, err)

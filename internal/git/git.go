@@ -2,9 +2,12 @@ package git
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/dwirx/ghex/internal/platform"
 	"github.com/dwirx/ghex/internal/shell"
@@ -16,9 +19,33 @@ func IsGitRepo(path string) bool {
 	return err == nil
 }
 
+// convertMSYSPath converts MSYS/Git Bash paths like /c/Users/... to C:/Users/...
+func convertMSYSPath(path string) string {
+	if len(path) >= 2 && path[0] == '/' && path[1] != '/' {
+		// Check if it looks like /c/... or /d/... (single letter drive)
+		parts := strings.SplitN(path[1:], "/", 2)
+		if len(parts[0]) == 1 {
+			driveLetter := strings.ToUpper(parts[0])
+			if len(parts) > 1 {
+				return driveLetter + ":/" + parts[1]
+			}
+			return driveLetter + ":/"
+		}
+	}
+	return path
+}
+
 // GetGitRoot returns the root directory of the git repository
 func GetGitRoot(path string) (string, error) {
-	return shell.RunInDir(path, "git", "rev-parse", "--show-toplevel")
+	result, err := shell.RunInDir(path, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	result = strings.TrimSpace(result)
+	if runtime.GOOS == "windows" {
+		result = convertMSYSPath(result)
+	}
+	return result, nil
 }
 
 // GetRemoteURL returns the URL of a remote
@@ -124,6 +151,9 @@ func WriteCredentials(username, token, host string) error {
 	data, err := os.ReadFile(credPath)
 	if err == nil {
 		existing = string(data)
+		// Normalize line endings (handle Windows \r\n)
+		existing = strings.ReplaceAll(existing, "\r\n", "\n")
+		existing = strings.ReplaceAll(existing, "\r", "\n")
 	}
 
 	// Filter out existing credentials for this host
@@ -152,21 +182,44 @@ func WriteCredentials(username, token, host string) error {
 
 // TestTokenAuth tests token authentication against GitHub API
 func TestTokenAuth(username, token string) (bool, string, error) {
-	// Use curl to test authentication
-	output, err := shell.Exec("curl",
-		"-s",
-		"-o", "/dev/null",
-		"-w", "%{http_code}",
-		"-u", fmt.Sprintf("%s:%s", username, token),
-		"https://api.github.com/user",
-	)
+	return TestTokenAuthForHost(username, token, "github.com")
+}
 
-	code := strings.TrimSpace(output)
-	if code == "200" {
-		return true, "HTTP 200 OK", nil
+// TestTokenAuthForHost tests token authentication against a specific host's API
+func TestTokenAuthForHost(username, token, host string) (bool, string, error) {
+	// Build API URL based on host
+	var apiURL string
+	switch host {
+	case "github.com":
+		apiURL = "https://api.github.com/user"
+	case "gitlab.com":
+		apiURL = "https://gitlab.com/api/v4/user"
+	default:
+		// For self-hosted GitLab, Gitea, Codeberg, etc.
+		// Try Gitea/Codeberg style API first (most common for self-hosted)
+		apiURL = fmt.Sprintf("https://%s/api/v1/user", host)
 	}
 
-	return false, fmt.Sprintf("HTTP %s", code), err
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(username, token)
+	req.Header.Set("User-Agent", "ghex-cli")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		return true, fmt.Sprintf("HTTP %d OK", resp.StatusCode), nil
+	}
+
+	return false, fmt.Sprintf("HTTP %d", resp.StatusCode), nil
 }
 
 // GetConfigList returns all git configuration

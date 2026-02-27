@@ -3,9 +3,11 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dwirx/ghex/internal/config"
+	"github.com/dwirx/ghex/internal/platform"
 	"github.com/dwirx/ghex/internal/ssh"
 	"github.com/dwirx/ghex/internal/ui"
 	"github.com/spf13/cobra"
@@ -258,7 +260,8 @@ func runImportSSHKey(cfg *config.AppConfig) {
 	}
 
 	destName := ui.PromptWithDefault("Destination filename", fmt.Sprintf("id_ed25519_%s", acc.Name))
-	destPath := fmt.Sprintf("~/.ssh/%s", destName)
+	sshDir := platform.GetSSHDir()
+	destPath := filepath.Join(sshDir, destName)
 
 	if err := ssh.ImportKey(srcPath, destPath); err != nil {
 		ui.ShowError(fmt.Sprintf("Failed to import key: %v", err))
@@ -302,11 +305,7 @@ func runImportSSHKey(cfg *config.AppConfig) {
 		}
 
 		// Expand destPath for testing
-		expandedDest := destPath
-		if strings.HasPrefix(expandedDest, "~") {
-			home, _ := os.UserHomeDir()
-			expandedDest = strings.Replace(expandedDest, "~", home, 1)
-		}
+		expandedDest := platform.ExpandPath(destPath)
 
 		// Auto-fix permissions for ALL keys
 		fixedCount, _ := ssh.FixAllKeyPermissions()
@@ -461,11 +460,7 @@ func runSwitchGlobalSSH(cfg *config.AppConfig) {
 	keyPath := acc.SSH.KeyPath
 
 	// Check if key exists
-	expandedPath := keyPath
-	if strings.HasPrefix(expandedPath, "~") {
-		home, _ := os.UserHomeDir()
-		expandedPath = strings.Replace(expandedPath, "~", home, 1)
-	}
+	expandedPath := platform.ExpandPath(keyPath)
 
 	if _, err := os.Stat(expandedPath); os.IsNotExist(err) {
 		if ui.Confirm(fmt.Sprintf("SSH key not found at %s. Generate now?", keyPath)) {
@@ -474,7 +469,11 @@ func runSwitchGlobalSSH(cfg *config.AppConfig) {
 				comment = acc.GitUserName
 			}
 			if comment == "" {
-				comment = fmt.Sprintf("%s@%s", acc.Name, acc.Platform.Type)
+				platformType := "github"
+				if acc.Platform != nil {
+					platformType = acc.Platform.Type
+				}
+				comment = fmt.Sprintf("%s@%s", acc.Name, platformType)
 			}
 
 			spinner := ui.NewSpinner("Generating SSH key...")

@@ -86,7 +86,12 @@ func runHealthCheck() {
 			spinner := ui.NewSpinner("  Testing Token...")
 			spinner.Start()
 
-			ok, msg, _ := git.TestTokenAuth(acc.Token.Username, acc.Token.Token)
+			// Determine API host based on account platform
+			apiHost := "github.com"
+			if acc.Platform != nil && acc.Platform.Domain != "" {
+				apiHost = acc.Platform.Domain
+			}
+			ok, msg, _ := git.TestTokenAuthForHost(acc.Token.Username, acc.Token.Token, apiHost)
 			if ok {
 				spinner.StopWithSuccess(fmt.Sprintf("  Token: %s", msg))
 			} else {

@@ -67,9 +67,13 @@ detect_arch() {
 }
 
 get_latest_version() {
-    curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | \
-        grep '"tag_name":' | \
-        sed -E 's/.*"([^"]+)".*/\1/'
+    if command -v jq &> /dev/null; then
+        curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | jq -r '.tag_name'
+    else
+        curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" | \
+            grep '"tag_name":' | \
+            sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+    fi
 }
 
 download_and_install() {
@@ -87,18 +91,19 @@ download_and_install() {
     
     info "Downloading ${filename}..."
     
-    local tmp_dir=$(mktemp -d)
-    cd "$tmp_dir"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
     
-    if ! curl -sSLO "$url"; then
+    if ! curl -sSL -o "${tmp_dir}/${filename}" "$url"; then
+        rm -rf "$tmp_dir"
         error "Failed to download from $url"
     fi
     
     info "Extracting..."
     if [ "$ext" = "tar.gz" ]; then
-        tar -xzf "$filename"
+        tar -xzf "${tmp_dir}/${filename}" -C "$tmp_dir"
     else
-        unzip -q "$filename"
+        unzip -q "${tmp_dir}/${filename}" -d "$tmp_dir"
     fi
     
     # Binary name from goreleaser is just "ghex" (or "ghex.exe" on windows)
@@ -109,23 +114,35 @@ download_and_install() {
     
     # Debug: show extracted files
     info "Extracted files:"
-    ls -la
+    ls -la "$tmp_dir"
     
-    if [ ! -f "$binary" ]; then
-        error "Binary '$binary' not found after extraction. Files in archive: $(ls -1)"
+    if [ ! -f "${tmp_dir}/${binary}" ]; then
+        rm -rf "$tmp_dir"
+        error "Binary '$binary' not found after extraction. Files in archive: $(ls -1 "$tmp_dir")"
     fi
     
     info "Installing to ${INSTALL_DIR}..."
     
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$binary" "${INSTALL_DIR}/${BINARY_NAME}"
+    if [ "$os" = "windows" ]; then
+        # On Windows (Git Bash/MSYS2), install to user's local app data
+        local win_install_dir="${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/ghex"
+        mkdir -p "$win_install_dir"
+        mv "${tmp_dir}/${binary}" "$win_install_dir/$BINARY_NAME"
+        # Add to PATH via user profile if not already there
+        if ! echo "$PATH" | grep -q "$win_install_dir"; then
+            echo "export PATH=\"\$PATH:$win_install_dir\"" >> "$HOME/.bashrc"
+            info "Added $win_install_dir to PATH in ~/.bashrc"
+            info "Please restart your terminal or run: source ~/.bashrc"
+        fi
+        INSTALL_DIR="$win_install_dir"
+    elif [ -w "$INSTALL_DIR" ]; then
+        mv "${tmp_dir}/${binary}" "${INSTALL_DIR}/${BINARY_NAME}"
         chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     else
-        sudo mv "$binary" "${INSTALL_DIR}/${BINARY_NAME}"
+        sudo mv "${tmp_dir}/${binary}" "${INSTALL_DIR}/${BINARY_NAME}"
         sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     fi
     
-    cd - > /dev/null
     rm -rf "$tmp_dir"
 }
 

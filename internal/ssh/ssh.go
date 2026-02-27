@@ -29,6 +29,7 @@ func GenerateKey(keyPath, comment string) error {
 		"-f", keyPath,
 		"-C", comment,
 		"-N", "", // Empty passphrase
+		"-q",    // Quiet mode to prevent interactive prompts
 	}
 
 	_, err := shell.Run("ssh-keygen", args...)
@@ -215,6 +216,11 @@ func ForceFixKeyPermissions(keyPath string) bool {
 	return true
 }
 
+// isGitBash returns true if running in Git Bash / MSYS2 on Windows
+func isGitBash() bool {
+	return os.Getenv("MSYSTEM") != "" || (platform.IsWindows() && os.Getenv("SHELL") != "")
+}
+
 // EnsureSSHDirPermissions ensures ~/.ssh directory and config have correct permissions
 func EnsureSSHDirPermissions() {
 	sshDir := platform.GetSSHDir()
@@ -224,7 +230,7 @@ func EnsureSSHDirPermissions() {
 		_, _ = shell.Exec("chmod", "700", sshDir)
 
 		// Fix SSH config permissions (600) if exists
-		configPath := sshDir + "/config"
+		configPath := filepath.Join(sshDir, "config")
 		if platform.FileExists(configPath) {
 			_, _ = shell.Exec("chmod", "600", configPath)
 		}
@@ -260,15 +266,15 @@ func TestConnectionWithKey(host, keyPath string) (bool, string, error) {
 		ForceFixKeyPermissions(keyPath)
 
 		// IMPORTANT: These options ensure ONLY the specified key is used
-		// -F /dev/null - Ignore SSH config file completely (Linux/Mac)
-		// -F NUL - Ignore SSH config file completely (Windows)
+		// -F /dev/null - Ignore SSH config file completely (Linux/Mac/Git Bash)
+		// -F NUL - Ignore SSH config file completely (Windows cmd/PowerShell)
 		// IdentitiesOnly=yes - Only use identities specified on command line
 		// IdentityAgent=none - Disable ssh-agent to prevent using other keys
-		if platform.IsWindows() {
-			args = append(args, "-F", "NUL")
-		} else {
-			args = append(args, "-F", "/dev/null")
+		nullDevice := "/dev/null"
+		if platform.IsWindows() && !isGitBash() {
+			nullDevice = "NUL"
 		}
+		args = append(args, "-F", nullDevice)
 		args = append(args, "-o", "IdentitiesOnly=yes")
 		args = append(args, "-o", "IdentityAgent=none") // Disable ssh-agent
 		args = append(args, "-i", keyPath)
@@ -372,6 +378,11 @@ func ListPrivateKeys() ([]string, error) {
 
 		// Skip public keys
 		if strings.HasSuffix(name, ".pub") {
+			continue
+		}
+
+		// Skip PuTTY key files
+		if strings.HasSuffix(name, ".ppk") {
 			continue
 		}
 
