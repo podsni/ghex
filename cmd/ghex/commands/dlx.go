@@ -184,18 +184,20 @@ func isGitHubURL(url string) bool {
 
 // runGitHubDownload auto-detects whether the GitHub URL points to a file (blob)
 // or a directory (tree) and downloads accordingly.
+// When downloading a file like https://github.com/owner/repo/blob/main/skill/SKILL.md
+// the folder structure (skill/SKILL.md) is preserved in the output directory.
 func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
 	isTree := strings.Contains(rawURL, "/tree/")
 	isBlob := strings.Contains(rawURL, "/blob/")
 
 	if isBlob {
-		// Single file download
+		// Single file download — preserve folder structure from repo path
 		if showInfo {
 			ui.ShowInfo(fmt.Sprintf("Downloading file from GitHub: %s", rawURL))
 		}
 		opts := download.GitOptions{
-			Output:    output,
-			OutputDir: outputDir,
+			Output:    output,    // empty = use repo path (preserves folder structure)
+			OutputDir: outputDir, // base output directory
 		}
 		return download.GitFile(rawURL, opts)
 	}
@@ -207,7 +209,7 @@ func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
 		}
 		opts := download.GitOptions{
 			OutputDir: outputDir,
-			Depth:     10,
+			Depth:     100, // allow deep directories
 		}
 		return download.GitDirectory(rawURL, opts)
 	}
@@ -218,7 +220,7 @@ func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
 	}
 	opts := download.GitOptions{
 		OutputDir: outputDir,
-		Depth:     10,
+		Depth:     100,
 	}
 	return download.GitDirectory(rawURL, opts)
 }

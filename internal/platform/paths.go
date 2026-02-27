@@ -69,10 +69,28 @@ func NormalizePath(path string) string {
 }
 
 // ToSSHPath converts a file path to a format compatible with SSH commands on all platforms.
-// On Windows, backslashes are replaced with forward slashes since SSH (OpenSSH/Git Bash)
-// requires POSIX-style paths for -i and -f arguments.
+// On Windows with Git Bash/MSYS2, paths like C:/Users/... must be converted to /c/Users/...
+// because SSH (OpenSSH running inside Git Bash) requires POSIX-style paths.
+// In PowerShell/cmd, forward-slash paths like C:/Users/... are accepted directly.
 func ToSSHPath(path string) string {
-	return strings.ReplaceAll(path, "\\", "/")
+	// First, normalize backslashes to forward slashes
+	path = strings.ReplaceAll(path, "\\", "/")
+
+	// If running in Git Bash / MSYS2 on Windows, convert drive letter to POSIX mount
+	// e.g. C:/Users/hendr/.ssh/key -> /c/Users/hendr/.ssh/key
+	if IsGitBashEnv() && len(path) >= 3 && path[1] == ':' && path[2] == '/' {
+		drive := strings.ToLower(string(path[0]))
+		path = "/" + drive + path[2:]
+	}
+
+	return path
+}
+
+// IsGitBashEnv returns true if the process is running inside Git Bash or MSYS2 on Windows.
+// This is detected by the presence of the MSYSTEM environment variable (set by Git Bash/MSYS2)
+// or by SHELL being set on Windows (Git Bash sets SHELL=/usr/bin/bash).
+func IsGitBashEnv() bool {
+	return os.Getenv("MSYSTEM") != "" || (IsWindows() && os.Getenv("SHELL") != "")
 }
 
 // ExpandPath expands environment variables and tilde in a path
