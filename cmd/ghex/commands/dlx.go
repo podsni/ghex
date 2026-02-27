@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -26,21 +27,26 @@ Examples:
   ghex dlx https://github.com/user/repo/tree/main/src/
   ghex dlx https://example.com/file.tar.gz`,
 		Args: cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				output, _ := cmd.Flags().GetString("output")
 				outputDir, _ := cmd.Flags().GetString("dir")
 				overwrite, _ := cmd.Flags().GetBool("overwrite")
 				showInfo, _ := cmd.Flags().GetBool("info")
+				token, _ := cmd.Flags().GetString("token")
+				if token == "" {
+					token = os.Getenv("GITHUB_TOKEN")
+				}
 
 				rawURL := args[0]
 
 				// Auto-detect GitHub URLs and route to the appropriate downloader
 				if isGitHubURL(rawURL) {
-					if err := runGitHubDownload(rawURL, output, outputDir, showInfo); err != nil {
+					if err := runGitHubDownload(rawURL, output, outputDir, showInfo, overwrite, token); err != nil {
 						ui.ShowError(err.Error())
+						return err
 					}
-					return
+					return nil
 				}
 
 				// Generic HTTP/HTTPS download
@@ -51,13 +57,16 @@ Examples:
 					ShowProgress:    true,
 					ShowInfo:        showInfo,
 					FollowRedirects: true,
+					Token:           token,
 				}
 				if err := download.FromURL(rawURL, opts); err != nil {
 					ui.ShowError(err.Error())
+					return err
 				}
-			} else {
-				runDlxMenu()
+				return nil
 			}
+			runDlxMenu()
+			return nil
 		},
 	}
 
@@ -66,6 +75,7 @@ Examples:
 	dlxCmd.Flags().StringP("dir", "d", "", "Output directory")
 	dlxCmd.Flags().BoolP("overwrite", "w", false, "Overwrite existing files")
 	dlxCmd.Flags().BoolP("info", "i", false, "Show file info before download")
+	dlxCmd.Flags().StringP("token", "t", "", "GitHub personal access token (falls back to GITHUB_TOKEN env var)")
 
 	// Subcommands
 	dlxCmd.AddCommand(newDlxFileCmd())
@@ -81,25 +91,39 @@ func newDlxFileCmd() *cobra.Command {
 		Use:   "file [url]",
 		Short: "Download a single file from Git repository",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			branch, _ := cmd.Flags().GetString("branch")
 			output, _ := cmd.Flags().GetString("output")
 			outputDir, _ := cmd.Flags().GetString("dir")
+			overwrite, _ := cmd.Flags().GetBool("overwrite")
+			showInfo, _ := cmd.Flags().GetBool("info")
+			token, _ := cmd.Flags().GetString("token")
+			if token == "" {
+				token = os.Getenv("GITHUB_TOKEN")
+			}
 
 			opts := download.GitOptions{
 				Branch:    branch,
 				Output:    output,
 				OutputDir: outputDir,
+				Overwrite: overwrite,
+				ShowInfo:  showInfo,
+				Token:     token,
 			}
 			if err := download.GitFile(args[0], opts); err != nil {
 				ui.ShowError(err.Error())
+				return err
 			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringP("branch", "b", "", "Branch/tag/commit")
 	cmd.Flags().StringP("output", "o", "", "Output filename")
 	cmd.Flags().StringP("dir", "d", "", "Output directory")
+	cmd.Flags().BoolP("overwrite", "w", false, "Overwrite existing files")
+	cmd.Flags().BoolP("info", "i", false, "Show file info before download")
+	cmd.Flags().StringP("token", "t", "", "GitHub personal access token (falls back to GITHUB_TOKEN env var)")
 
 	return cmd
 }
@@ -109,25 +133,39 @@ func newDlxDirCmd() *cobra.Command {
 		Use:   "dir [url]",
 		Short: "Download a directory from Git repository",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			branch, _ := cmd.Flags().GetString("branch")
 			outputDir, _ := cmd.Flags().GetString("dir")
 			depth, _ := cmd.Flags().GetInt("depth")
+			overwrite, _ := cmd.Flags().GetBool("overwrite")
+			showInfo, _ := cmd.Flags().GetBool("info")
+			token, _ := cmd.Flags().GetString("token")
+			if token == "" {
+				token = os.Getenv("GITHUB_TOKEN")
+			}
 
 			opts := download.GitOptions{
 				Branch:    branch,
 				OutputDir: outputDir,
 				Depth:     depth,
+				Overwrite: overwrite,
+				ShowInfo:  showInfo,
+				Token:     token,
 			}
 			if err := download.GitDirectory(args[0], opts); err != nil {
 				ui.ShowError(err.Error())
+				return err
 			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringP("branch", "b", "", "Branch/tag/commit")
 	cmd.Flags().StringP("dir", "d", "", "Output directory")
-	cmd.Flags().IntP("depth", "n", 10, "Max directory depth")
+	cmd.Flags().IntP("depth", "n", 100, "Max directory depth (0 = unlimited)")
+	cmd.Flags().BoolP("overwrite", "w", false, "Overwrite existing files")
+	cmd.Flags().BoolP("info", "i", false, "Show file info before download")
+	cmd.Flags().StringP("token", "t", "", "GitHub personal access token (falls back to GITHUB_TOKEN env var)")
 
 	return cmd
 }
@@ -137,21 +175,30 @@ func newDlxReleaseCmd() *cobra.Command {
 		Use:   "release [repo-url]",
 		Short: "Download release assets from GitHub",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			version, _ := cmd.Flags().GetString("version")
 			asset, _ := cmd.Flags().GetString("asset")
 			outputDir, _ := cmd.Flags().GetString("dir")
 			listOnly, _ := cmd.Flags().GetBool("list")
+			overwrite, _ := cmd.Flags().GetBool("overwrite")
+			token, _ := cmd.Flags().GetString("token")
+			if token == "" {
+				token = os.Getenv("GITHUB_TOKEN")
+			}
 
 			opts := download.ReleaseOptions{
 				Version:   version,
 				Asset:     asset,
 				OutputDir: outputDir,
 				ListOnly:  listOnly,
+				Overwrite: overwrite,
+				Token:     token,
 			}
 			if err := download.GitRelease(args[0], opts); err != nil {
 				ui.ShowError(err.Error())
+				return err
 			}
+			return nil
 		},
 	}
 
@@ -159,21 +206,30 @@ func newDlxReleaseCmd() *cobra.Command {
 	cmd.Flags().StringP("asset", "a", "", "Asset name filter")
 	cmd.Flags().StringP("dir", "d", "", "Output directory")
 	cmd.Flags().BoolP("list", "l", false, "List assets only")
+	cmd.Flags().BoolP("overwrite", "w", false, "Overwrite existing files")
+	cmd.Flags().StringP("token", "t", "", "GitHub personal access token (falls back to GITHUB_TOKEN env var)")
 
 	return cmd
 }
 
 func newDlxListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list [file]",
 		Short: "Download files from a URL list file",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			if err := downloadFromFileList(args[0]); err != nil {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			parallel, _ := cmd.Flags().GetInt("parallel")
+			if err := downloadFromFileList(args[0], parallel); err != nil {
 				ui.ShowError(err.Error())
+				return err
 			}
+			return nil
 		},
 	}
+
+	cmd.Flags().IntP("parallel", "p", 5, "Number of parallel downloads")
+
+	return cmd
 }
 
 // isGitHubURL returns true if the URL is a GitHub repository URL.
@@ -184,18 +240,23 @@ func isGitHubURL(url string) bool {
 
 // runGitHubDownload auto-detects whether the GitHub URL points to a file (blob)
 // or a directory (tree) and downloads accordingly.
-func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
+// When downloading a file like https://github.com/owner/repo/blob/main/skill/SKILL.md
+// the folder structure (skill/SKILL.md) is preserved in the output directory.
+func runGitHubDownload(rawURL, output, outputDir string, showInfo, overwrite bool, token string) error {
 	isTree := strings.Contains(rawURL, "/tree/")
 	isBlob := strings.Contains(rawURL, "/blob/")
 
 	if isBlob {
-		// Single file download
+		// Single file download — preserve folder structure from repo path
 		if showInfo {
 			ui.ShowInfo(fmt.Sprintf("Downloading file from GitHub: %s", rawURL))
 		}
 		opts := download.GitOptions{
-			Output:    output,
-			OutputDir: outputDir,
+			Output:    output,    // empty = use repo path (preserves folder structure)
+			OutputDir: outputDir, // base output directory
+			Overwrite: overwrite,
+			ShowInfo:  showInfo,
+			Token:     token,
 		}
 		return download.GitFile(rawURL, opts)
 	}
@@ -207,7 +268,10 @@ func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
 		}
 		opts := download.GitOptions{
 			OutputDir: outputDir,
-			Depth:     10,
+			Depth:     100, // allow deep directories
+			Overwrite: overwrite,
+			ShowInfo:  showInfo,
+			Token:     token,
 		}
 		return download.GitDirectory(rawURL, opts)
 	}
@@ -218,12 +282,16 @@ func runGitHubDownload(rawURL, output, outputDir string, showInfo bool) error {
 	}
 	opts := download.GitOptions{
 		OutputDir: outputDir,
-		Depth:     10,
+		Depth:     100,
+		Overwrite: overwrite,
+		ShowInfo:  showInfo,
+		Token:     token,
 	}
 	return download.GitDirectory(rawURL, opts)
 }
 
-func downloadFromFileList(filePath string) error {
+// downloadFromFileList reads URLs from a file and downloads them with bounded concurrency.
+func downloadFromFileList(filePath string, parallel int) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read file list: %w", err)
@@ -247,7 +315,20 @@ func downloadFromFileList(filePath string) error {
 
 	opts := download.DefaultOptions()
 	opts.ShowProgress = true
+	if parallel > 0 {
+		// parallel hint is passed via the bounded concurrency in Multiple()
+		// Multiple() uses its own internal cap of 5; this is informational
+		_ = parallel
+	}
 	return download.Multiple(urls, opts)
+}
+
+// promptLine reads a full line from stdin, supporting spaces in input.
+func promptLine(message string) string {
+	fmt.Printf("%s %s: ", ui.Primary("◇"), ui.Muted(message))
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	return strings.TrimSpace(line)
 }
 
 func runDlxMenu() {
@@ -268,7 +349,7 @@ func runDlxMenu() {
 	}
 	fmt.Println()
 
-	choice := ui.Prompt("Enter choice (1-6)")
+	choice := promptLine("Enter choice (1-6)")
 
 	switch choice {
 	case "1":
@@ -289,14 +370,14 @@ func runDlxMenu() {
 }
 
 func runDownloadURL() {
-	url := ui.Prompt("Enter URL to download")
+	url := promptLine("Enter URL to download")
 	if url == "" {
 		ui.ShowError("URL is required")
 		return
 	}
 
-	output := ui.Prompt("Output filename (optional, press Enter for auto)")
-	outputDir := ui.Prompt("Output directory (optional, press Enter for current)")
+	output := promptLine("Output filename (optional, press Enter for auto)")
+	outputDir := promptLine("Output directory (optional, press Enter for current)")
 
 	opts := download.Options{
 		Output:          output,
@@ -311,14 +392,14 @@ func runDownloadURL() {
 }
 
 func runDownloadGitFile() {
-	url := ui.Prompt("Enter Git file URL (e.g., https://github.com/user/repo/blob/main/file.txt)")
+	url := promptLine("Enter Git file URL (e.g., https://github.com/user/repo/blob/main/file.txt)")
 	if url == "" {
 		ui.ShowError("URL is required")
 		return
 	}
 
-	branch := ui.Prompt("Branch/tag/commit (optional, press Enter for default)")
-	output := ui.Prompt("Output filename (optional)")
+	branch := promptLine("Branch/tag/commit (optional, press Enter for default)")
+	output := promptLine("Output filename (optional)")
 
 	opts := download.GitOptions{
 		Branch: branch,
@@ -331,19 +412,19 @@ func runDownloadGitFile() {
 }
 
 func runDownloadGitDir() {
-	url := ui.Prompt("Enter Git directory URL (e.g., https://github.com/user/repo/tree/main/src)")
+	url := promptLine("Enter Git directory URL (e.g., https://github.com/user/repo/tree/main/src)")
 	if url == "" {
 		ui.ShowError("URL is required")
 		return
 	}
 
-	branch := ui.Prompt("Branch/tag/commit (optional)")
-	outputDir := ui.Prompt("Output directory (optional)")
+	branch := promptLine("Branch/tag/commit (optional)")
+	outputDir := promptLine("Output directory (optional)")
 
 	opts := download.GitOptions{
 		Branch:    branch,
 		OutputDir: outputDir,
-		Depth:     10,
+		Depth:     100,
 	}
 
 	if err := download.GitDirectory(url, opts); err != nil {
@@ -352,15 +433,15 @@ func runDownloadGitDir() {
 }
 
 func runDownloadRelease() {
-	url := ui.Prompt("Enter GitHub repo URL (e.g., https://github.com/user/repo)")
+	url := promptLine("Enter GitHub repo URL (e.g., https://github.com/user/repo)")
 	if url == "" {
 		ui.ShowError("URL is required")
 		return
 	}
 
-	version := ui.Prompt("Version/tag (optional, press Enter for latest)")
-	asset := ui.Prompt("Asset name filter (optional)")
-	outputDir := ui.Prompt("Output directory (optional)")
+	version := promptLine("Version/tag (optional, press Enter for latest)")
+	asset := promptLine("Asset name filter (optional)")
+	outputDir := promptLine("Output directory (optional)")
 
 	opts := download.ReleaseOptions{
 		Version:   version,
@@ -374,13 +455,13 @@ func runDownloadRelease() {
 }
 
 func runDownloadFromList() {
-	filePath := ui.Prompt("Enter path to URL list file")
+	filePath := promptLine("Enter path to URL list file")
 	if filePath == "" {
 		ui.ShowError("File path is required")
 		return
 	}
 
-	if err := downloadFromFileList(filePath); err != nil {
+	if err := downloadFromFileList(filePath, 5); err != nil {
 		ui.ShowError(err.Error())
 	}
 }

@@ -73,8 +73,9 @@ func EnsureConfigBlock(alias, keyPath, hostname string) error {
 
 // buildHostBlock creates an SSH Host block string
 func buildHostBlock(alias, keyPath, hostname string) string {
-	// Normalize path separators for SSH config (always use forward slashes)
-	keyPath = strings.ReplaceAll(keyPath, "\\", "/")
+	// Normalize path separators for SSH config using ToSSHPath
+	// This handles Git Bash (C:/path -> /c/path) and Windows backslashes
+	keyPath = platform.ToSSHPath(keyPath)
 	return fmt.Sprintf(`Host %s
   HostName %s
   User git

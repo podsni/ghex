@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,24 +14,28 @@ import (
 	"github.com/dwirx/ghex/internal/ui"
 )
 
-// GitOptions configures git download behavior
+// GitOptions configures git download behavior.
 type GitOptions struct {
-	Branch    string
-	Output    string
-	OutputDir string
-	Depth     int
-	Overwrite bool
+	Branch    string // Branch/tag/commit (empty = default branch)
+	Output    string // Output filename for single file
+	OutputDir string // Output directory
+	Depth     int    // Max directory depth (0 = unlimited)
+	Overwrite bool   // Overwrite existing files
+	ShowInfo  bool   // Show file info before download
+	Token     string // GitHub personal access token (falls back to GITHUB_TOKEN env var)
 }
 
-// ReleaseOptions configures release download behavior
+// ReleaseOptions configures release download behavior.
 type ReleaseOptions struct {
-	Version   string
-	Asset     string
-	OutputDir string
-	ListOnly  bool
+	Version   string // Release version/tag (empty = latest)
+	Asset     string // Asset name filter
+	OutputDir string // Output directory
+	ListOnly  bool   // Only list assets, don't download
+	Token     string // GitHub personal access token
+	Overwrite bool   // Overwrite existing files
 }
 
-// ParsedGitURL represents a parsed git URL
+// ParsedGitURL represents a parsed git URL.
 type ParsedGitURL struct {
 	Platform    string // github, gitlab, bitbucket
 	Owner       string
@@ -40,7 +45,7 @@ type ParsedGitURL struct {
 	IsDirectory bool
 }
 
-// GitFile downloads a single file from a git repository
+// GitFile downloads a single file from a git repository.
 func GitFile(url string, opts GitOptions) error {
 	parsed, err := parseGitURL(url)
 	if err != nil {
@@ -54,6 +59,12 @@ func GitFile(url string, opts GitOptions) error {
 	if parsed.IsDirectory {
 		ui.ShowWarning("This appears to be a directory. Use GitDirectory instead.")
 		return nil
+	}
+
+	// Resolve token: explicit option takes precedence over env var
+	token := opts.Token
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
 	}
 
 	rawURL := toRawURL(parsed)
@@ -73,13 +84,39 @@ func GitFile(url string, opts GitOptions) error {
 		OutputDir:       opts.OutputDir,
 		Overwrite:       opts.Overwrite,
 		ShowProgress:    true,
+		ShowInfo:        opts.ShowInfo,
 		FollowRedirects: true,
+		Token:           token,
 	}
 
-	return FromURL(rawURL, downloadOpts)
+	err = FromURL(rawURL, downloadOpts)
+	if err != nil {
+		// If main branch 404s and no explicit branch was set, try master
+		var notFound *ErrNotFound
+		if isErrNotFound(err, &notFound) && parsed.Branch == "main" && opts.Branch == "" {
+			parsed.Branch = "master"
+			rawURL = toRawURL(parsed)
+			ui.ShowInfo("Branch 'main' not found, trying 'master'...")
+			err = FromURL(rawURL, downloadOpts)
+		}
+	}
+	return err
 }
 
-// GitDirectory downloads a directory from a git repository
+// isErrNotFound checks if err is an ErrNotFound and sets target if so.
+func isErrNotFound(err error, target **ErrNotFound) bool {
+	if nf, ok := err.(*ErrNotFound); ok {
+		*target = nf
+		return true
+	}
+	// Also check ErrHTTP with 404
+	if he, ok := err.(*ErrHTTP); ok && he.StatusCode == 404 {
+		return true
+	}
+	return false
+}
+
+// GitDirectory downloads a directory from a git repository.
 func GitDirectory(url string, opts GitOptions) error {
 	parsed, err := parseGitURL(url)
 	if err != nil {
@@ -94,16 +131,34 @@ func GitDirectory(url string, opts GitOptions) error {
 		return fmt.Errorf("directory download only supported for GitHub")
 	}
 
+	// Resolve token: explicit option takes precedence over env var
+	token := opts.Token
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+	}
+
 	ui.ShowSection("Downloading Directory")
 	ui.ShowKeyValue("Repository", fmt.Sprintf("%s/%s", parsed.Owner, parsed.Repo))
 	ui.ShowKeyValue("Branch", parsed.Branch)
-	ui.ShowKeyValue("Path", parsed.FilePath)
+	if parsed.FilePath != "" {
+		ui.ShowKeyValue("Path", parsed.FilePath)
+	} else {
+		ui.ShowKeyValue("Path", "(repository root)")
+	}
 	fmt.Println()
 
 	// Fetch directory contents
-	files, err := fetchDirectoryContents(parsed, opts.Depth)
+	files, err := fetchDirectoryContents(parsed, opts.Depth, token)
 	if err != nil {
-		return err
+		// If main branch fails and no explicit branch was set, try master
+		if parsed.Branch == "main" && opts.Branch == "" {
+			parsed.Branch = "master"
+			ui.ShowInfo("Branch 'main' not found, trying 'master'...")
+			files, err = fetchDirectoryContents(parsed, opts.Depth, token)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(files) == 0 {
@@ -113,7 +168,7 @@ func GitDirectory(url string, opts GitOptions) error {
 
 	ui.ShowInfo(fmt.Sprintf("Found %d files", len(files)))
 
-	// Download all files
+	// Determine output directory
 	outputDir := opts.OutputDir
 	if outputDir == "" {
 		outputDir = parsed.Repo
@@ -139,6 +194,7 @@ func GitDirectory(url string, opts GitOptions) error {
 			Overwrite:       opts.Overwrite,
 			ShowProgress:    false,
 			FollowRedirects: true,
+			Token:           token,
 		}
 
 		if err := FromURL(file.URL, downloadOpts); err != nil {
@@ -152,7 +208,7 @@ func GitDirectory(url string, opts GitOptions) error {
 	return nil
 }
 
-// GitRelease downloads release assets from GitHub
+// GitRelease downloads release assets from GitHub.
 func GitRelease(url string, opts ReleaseOptions) error {
 	parsed, err := parseGitURL(url)
 	if err != nil {
@@ -161,6 +217,12 @@ func GitRelease(url string, opts ReleaseOptions) error {
 
 	if parsed.Platform != "github" {
 		return fmt.Errorf("release download only supported for GitHub")
+	}
+
+	// Resolve token: explicit option takes precedence over env var
+	token := opts.Token
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
 	}
 
 	ui.ShowSection("GitHub Release")
@@ -172,11 +234,30 @@ func GitRelease(url string, opts ReleaseOptions) error {
 		apiURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", parsed.Owner, parsed.Repo, opts.Version)
 	}
 
-	resp, err := http.Get(apiURL)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "ghex-downloader/1.0")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch release: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Check for rate limiting
+	if resp.StatusCode == http.StatusForbidden {
+		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			resetAt := resp.Header.Get("X-RateLimit-Reset")
+			return &ErrRateLimit{ResetAt: resetAt}
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("release not found: %s", resp.Status)
@@ -198,7 +279,9 @@ func GitRelease(url string, opts ReleaseOptions) error {
 	}
 
 	ui.ShowKeyValue("Version", release.TagName)
-	ui.ShowKeyValue("Published", release.PublishedAt[:10])
+	if len(release.PublishedAt) >= 10 {
+		ui.ShowKeyValue("Published", release.PublishedAt[:10])
+	}
 	fmt.Println()
 
 	if len(release.Assets) == 0 {
@@ -267,8 +350,10 @@ func GitRelease(url string, opts ReleaseOptions) error {
 		downloadOpts := Options{
 			Output:          asset.Name,
 			OutputDir:       opts.OutputDir,
+			Overwrite:       opts.Overwrite,
 			ShowProgress:    true,
 			FollowRedirects: true,
+			Token:           token,
 		}
 
 		if err := FromURL(asset.BrowserDownloadURL, downloadOpts); err != nil {
@@ -279,7 +364,7 @@ func GitRelease(url string, opts ReleaseOptions) error {
 	return nil
 }
 
-// parseGitURL parses a git repository URL
+// parseGitURL parses a git repository URL.
 func parseGitURL(url string) (*ParsedGitURL, error) {
 	parsed := &ParsedGitURL{
 		Branch: "main",
@@ -314,6 +399,7 @@ func parseGitURL(url string) (*ParsedGitURL, error) {
 		parsed.Platform = "github"
 		parsed.Owner = matches[1]
 		parsed.Repo = strings.TrimSuffix(matches[2], ".git")
+		parsed.FilePath = "" // repo root
 		parsed.IsDirectory = true
 		return parsed, nil
 	}
@@ -345,7 +431,7 @@ func parseGitURL(url string) (*ParsedGitURL, error) {
 	return nil, fmt.Errorf("unsupported URL format: %s", url)
 }
 
-// toRawURL converts a parsed URL to raw download URL
+// toRawURL converts a parsed URL to raw download URL.
 func toRawURL(parsed *ParsedGitURL) string {
 	switch parsed.Platform {
 	case "github":
@@ -364,27 +450,51 @@ type fileInfo struct {
 	URL  string
 }
 
-// fetchDirectoryContents fetches all files in a directory
-func fetchDirectoryContents(parsed *ParsedGitURL, maxDepth int) ([]fileInfo, error) {
+// fetchDirectoryContents fetches all files in a directory using the GitHub Contents API.
+// token is optional; if provided it is sent as Authorization: Bearer <token>.
+func fetchDirectoryContents(parsed *ParsedGitURL, maxDepth int, token string) ([]fileInfo, error) {
 	var files []fileInfo
 
 	var fetchRecursive func(path string, depth int) error
 	fetchRecursive = func(path string, depth int) error {
-		if depth > maxDepth {
+		if maxDepth > 0 && depth > maxDepth {
 			return nil
 		}
 
 		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
 			parsed.Owner, parsed.Repo, path, parsed.Branch)
 
-		resp, err := http.Get(apiURL)
+		req, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/vnd.github.v3+json")
+		req.Header.Set("User-Agent", "ghex-downloader/1.0")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}
 		defer resp.Body.Close()
 
+		// Check for rate limiting
+		if resp.StatusCode == http.StatusForbidden {
+			if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+				resetAt := resp.Header.Get("X-RateLimit-Reset")
+				return &ErrRateLimit{ResetAt: resetAt}
+			}
+		}
+
+		if resp.StatusCode == http.StatusNotFound {
+			return &ErrNotFound{URL: apiURL}
+		}
+
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("API error: %s", resp.Status)
+			return &ErrHTTP{StatusCode: resp.StatusCode, Status: resp.Status, URL: apiURL}
 		}
 
 		body, err := io.ReadAll(resp.Body)
@@ -411,7 +521,8 @@ func fetchDirectoryContents(parsed *ParsedGitURL, maxDepth int) ([]fileInfo, err
 				})
 			} else if item.Type == "dir" {
 				if err := fetchRecursive(item.Path, depth+1); err != nil {
-					// Continue on error
+					// Continue on error but log it
+					ui.ShowWarning(fmt.Sprintf("Failed to list %s: %v", item.Path, err))
 				}
 			}
 		}
@@ -419,22 +530,11 @@ func fetchDirectoryContents(parsed *ParsedGitURL, maxDepth int) ([]fileInfo, err
 		return nil
 	}
 
-	if err := fetchRecursive(parsed.FilePath, 0); err != nil {
+	// Handle repo root (empty FilePath) — pass empty string to API
+	startPath := parsed.FilePath
+	if err := fetchRecursive(startPath, 0); err != nil {
 		return nil, err
 	}
 
 	return files, nil
-}
-
-func formatSize(bytes int64) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	if bytes < 1024*1024 {
-		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
-	}
-	if bytes < 1024*1024*1024 {
-		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
-	}
-	return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
 }

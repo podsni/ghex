@@ -197,19 +197,24 @@ func ForceFixKeyPermissions(keyPath string) bool {
 	}
 
 	// Use chmod command directly for more reliable permission fixing
-	if !platform.IsWindows() {
+	// Also works in Git Bash on Windows (which has Unix chmod available)
+	if !platform.IsWindows() || isGitBash() {
+		// Convert path to SSH/POSIX format for Git Bash compatibility
+		// e.g. C:\Users\hendr\.ssh\key -> /c/Users/hendr/.ssh/key
+		chmodPath := platform.ToSSHPath(keyPath)
+
 		// Fix private key permissions (600)
-		_, _ = shell.Exec("chmod", "600", keyPath)
+		_, _ = shell.Exec("chmod", "600", chmodPath)
 
 		// Fix public key permissions (644) if exists
 		pubPath := keyPath + ".pub"
 		if platform.FileExists(pubPath) {
-			_, _ = shell.Exec("chmod", "644", pubPath)
+			_, _ = shell.Exec("chmod", "644", platform.ToSSHPath(pubPath))
 		}
 		return true
 	}
 
-	// On Windows, use os.Chmod (may not work perfectly but try anyway)
+	// On Windows (PowerShell/cmd), use os.Chmod (may not work perfectly but try anyway)
 	_ = os.Chmod(keyPath, 0600)
 	pubPath := keyPath + ".pub"
 	if platform.FileExists(pubPath) {
@@ -220,21 +225,25 @@ func ForceFixKeyPermissions(keyPath string) bool {
 
 // isGitBash returns true if running in Git Bash / MSYS2 on Windows
 func isGitBash() bool {
-	return os.Getenv("MSYSTEM") != "" || (platform.IsWindows() && os.Getenv("SHELL") != "")
+	return platform.IsGitBashEnv()
 }
 
 // EnsureSSHDirPermissions ensures ~/.ssh directory and config have correct permissions
 func EnsureSSHDirPermissions() {
 	sshDir := platform.GetSSHDir()
 
-	if !platform.IsWindows() {
+	// Run chmod on non-Windows OR when running in Git Bash (which has Unix chmod available)
+	if !platform.IsWindows() || isGitBash() {
+		// Convert path to SSH/POSIX format for Git Bash compatibility
+		sshDirPosix := platform.ToSSHPath(sshDir)
+
 		// Fix SSH directory permissions (700)
-		_, _ = shell.Exec("chmod", "700", sshDir)
+		_, _ = shell.Exec("chmod", "700", sshDirPosix)
 
 		// Fix SSH config permissions (600) if exists
 		configPath := filepath.Join(sshDir, "config")
 		if platform.FileExists(configPath) {
-			_, _ = shell.Exec("chmod", "600", configPath)
+			_, _ = shell.Exec("chmod", "600", platform.ToSSHPath(configPath))
 		}
 	}
 }
