@@ -3,6 +3,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -87,10 +88,12 @@ func ToSSHPath(path string) string {
 }
 
 // IsGitBashEnv returns true if the process is running inside Git Bash or MSYS2 on Windows.
-// This is detected by the presence of the MSYSTEM environment variable (set by Git Bash/MSYS2)
-// or by SHELL being set on Windows (Git Bash sets SHELL=/usr/bin/bash).
+// This is detected by the presence of the MSYSTEM environment variable (set by Git Bash/MSYS2).
+// Git Bash sets MSYSTEM to "MINGW64" or "MINGW32"; MSYS2 sets it to "MSYS".
+// This check is intentionally narrow: only convert paths when on Windows AND MSYSTEM is set,
+// to avoid incorrectly converting paths in PowerShell or cmd.exe.
 func IsGitBashEnv() bool {
-	return os.Getenv("MSYSTEM") != "" || (IsWindows() && os.Getenv("SHELL") != "")
+	return runtime.GOOS == "windows" && os.Getenv("MSYSTEM") != ""
 }
 
 // ExpandPath expands environment variables and tilde in a path
