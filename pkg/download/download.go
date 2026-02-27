@@ -1,3 +1,6 @@
+// Package download provides utilities for downloading files from URLs and Git repositories.
+// It supports single file downloads, GitHub file/folder downloads via the GitHub API,
+// and release asset downloads.
 package download
 
 import (
@@ -8,187 +11,178 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/dwirx/ghex/internal/platform"
-	"github.com/dwirx/ghex/internal/ui"
 )
 
-// Options configures download behavior
+// Options configures a generic URL download
 type Options struct {
-	Output          string
-	OutputDir       string
-	Overwrite       bool
-	ShowProgress    bool
-	ShowInfo        bool
+	// Output is the output filename (optional; auto-detected from URL if empty)
+	Output string
+	// OutputDir is the directory to save the file in (default: current directory)
+	OutputDir string
+	// Overwrite allows overwriting existing files
+	Overwrite bool
+	// ShowProgress enables progress output to stdout
+	ShowProgress bool
+	// ShowInfo prints file metadata before downloading
+	ShowInfo bool
+	// FollowRedirects enables following HTTP redirects
 	FollowRedirects bool
-	UserAgent       string
-	Headers         map[string]string
-	Timeout         time.Duration
 }
 
-// DefaultOptions returns default download options
+// DefaultOptions returns Options with sensible defaults
 func DefaultOptions() Options {
 	return Options{
+		ShowProgress:    true,
 		FollowRedirects: true,
-		UserAgent:       "ghe/1.0",
-		Timeout:         30 * time.Second,
 	}
 }
 
-// FromURL downloads a file from a URL
-func FromURL(url string, opts Options) error {
-	// Create HTTP client
-	client := &http.Client{
-		Timeout: opts.Timeout,
+// httpClient is a shared HTTP client with a reasonable timeout
+var httpClient = &http.Client{
+	Timeout: 60 * time.Second,
+}
+
+// FromURL downloads a file from any HTTP/HTTPS URL.
+func FromURL(rawURL string, opts Options) error {
+	// Auto-detect output filename from URL if not specified
+	outputName := opts.Output
+	if outputName == "" {
+		parts := strings.Split(rawURL, "/")
+		for i := len(parts) - 1; i >= 0; i-- {
+			if parts[i] != "" {
+				outputName = parts[i]
+				// Strip query string if present
+				if idx := strings.Index(outputName, "?"); idx != -1 {
+					outputName = outputName[:idx]
+				}
+				break
+			}
+		}
+	}
+	if outputName == "" {
+		outputName = "download"
 	}
 
-	if !opts.FollowRedirects {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
+	destPath := filepath.Join(opts.OutputDir, outputName)
+
+	if opts.ShowInfo {
+		fmt.Printf("  URL:  %s\n", rawURL)
+		fmt.Printf("  Dest: %s\n", destPath)
+	}
+
+	return downloadFile(rawURL, destPath, opts.Overwrite, opts.ShowProgress)
+}
+
+// Multiple downloads multiple files from a list of URLs.
+func Multiple(urls []string, opts Options) error {
+	var errs []string
+	for i, u := range urls {
+		if opts.ShowProgress {
+			fmt.Printf("[%d/%d] %s\n", i+1, len(urls), u)
+		}
+		if err := FromURL(u, opts); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", u, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("some downloads failed:\n  %s", strings.Join(errs, "\n  "))
+	}
+	return nil
+}
+
+// downloadFile downloads a single file from a URL to a local path.
+// If showProgress is true, a simple progress indicator is printed.
+func downloadFile(url, destPath string, overwrite, showProgress bool) error {
+	// Check if file already exists
+	if !overwrite {
+		if _, err := os.Stat(destPath); err == nil {
+			if showProgress {
+				fmt.Printf("  ✓ Already exists: %s\n", destPath)
+			}
+			return nil
 		}
 	}
 
-	// Create request
+	// Ensure parent directory exists
+	if dir := filepath.Dir(destPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "ghex-downloader/1.0")
 
-	// Set headers
-	if opts.UserAgent != "" {
-		req.Header.Set("User-Agent", opts.UserAgent)
-	}
-	for k, v := range opts.Headers {
-		req.Header.Set(k, v)
-	}
-
-	// Show info if requested
-	if opts.ShowInfo {
-		ui.ShowInfo(fmt.Sprintf("URL: %s", url))
-	}
-
-	// Execute request
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to download: %w", err)
+		return fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("file not found (404): %s", url)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return fmt.Errorf("server returned status %d for %s", resp.StatusCode, url)
 	}
 
-	// Determine output filename
-	filename := opts.Output
-	if filename == "" {
-		filename = getFilenameFromURL(url)
-		if filename == "" {
-			filename = getFilenameFromHeader(resp.Header.Get("Content-Disposition"))
-		}
-		if filename == "" {
-			filename = "download"
-		}
-	}
-
-	// Determine output path
-	outputPath := filename
-	if opts.OutputDir != "" {
-		if err := platform.EnsureDir(opts.OutputDir, 0755); err != nil {
-			return fmt.Errorf("failed to create output directory: %w", err)
-		}
-		outputPath = filepath.Join(opts.OutputDir, filename)
-	}
-
-	// Check if file exists
-	if !opts.Overwrite && platform.FileExists(outputPath) {
-		return fmt.Errorf("file already exists: %s (use --overwrite to replace)", outputPath)
-	}
-
-	// Create output file
-	out, err := os.Create(outputPath)
+	// Create destination file
+	f, err := os.Create(destPath)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return fmt.Errorf("failed to create file %s: %w", destPath, err)
 	}
-	defer out.Close()
+	defer f.Close()
 
-	// Download with progress
-	var reader io.Reader = resp.Body
-	if opts.ShowProgress && resp.ContentLength > 0 {
-		reader = &progressReader{
+	// Copy with optional progress
+	if showProgress && resp.ContentLength > 0 {
+		written, err := io.Copy(f, &progressReader{
 			reader: resp.Body,
 			total:  resp.ContentLength,
+			dest:   destPath,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to write file: %w", err)
+		}
+		fmt.Printf("\r  ✓ %s (%s)\n", destPath, formatSize(written))
+	} else {
+		if _, err := io.Copy(f, resp.Body); err != nil {
+			return fmt.Errorf("failed to write file: %w", err)
+		}
+		if showProgress {
+			info, _ := f.Stat()
+			size := int64(0)
+			if info != nil {
+				size = info.Size()
+			}
+			fmt.Printf("  ✓ %s (%s)\n", destPath, formatSize(size))
 		}
 	}
 
-	written, err := io.Copy(out, reader)
-	if err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-
-	if opts.ShowProgress {
-		fmt.Println() // New line after progress
-	}
-
-	ui.ShowSuccess(fmt.Sprintf("Downloaded: %s (%d bytes)", outputPath, written))
 	return nil
 }
 
-// getFilenameFromURL extracts filename from URL
-func getFilenameFromURL(url string) string {
-	parts := strings.Split(url, "/")
-	if len(parts) > 0 {
-		filename := parts[len(parts)-1]
-		// Remove query string
-		if idx := strings.Index(filename, "?"); idx != -1 {
-			filename = filename[:idx]
-		}
-		return filename
-	}
-	return ""
-}
-
-// getFilenameFromHeader extracts filename from Content-Disposition header
-func getFilenameFromHeader(header string) string {
-	if header == "" {
-		return ""
-	}
-	// Parse Content-Disposition: attachment; filename="example.pdf"
-	parts := strings.Split(header, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "filename=") {
-			filename := strings.TrimPrefix(part, "filename=")
-			filename = strings.Trim(filename, `"'`)
-			return filename
-		}
-	}
-	return ""
-}
-
-// progressReader wraps a reader to show download progress
+// progressReader wraps an io.Reader and prints download progress.
 type progressReader struct {
 	reader  io.Reader
 	total   int64
-	current int64
+	written int64
+	dest    string
 }
 
-func (pr *progressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	pr.current += int64(n)
-
-	// Print progress
-	percent := float64(pr.current) / float64(pr.total) * 100
-	fmt.Printf("\rDownloading: %.1f%% (%d/%d bytes)", percent, pr.current, pr.total)
-
-	return n, err
-}
-
-// Multiple downloads multiple files from URLs
-func Multiple(urls []string, opts Options) error {
-	for _, url := range urls {
-		if err := FromURL(url, opts); err != nil {
-			ui.ShowError(fmt.Sprintf("Failed to download %s: %v", url, err))
-		}
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.reader.Read(buf)
+	p.written += int64(n)
+	if p.total > 0 {
+		pct := float64(p.written) / float64(p.total) * 100
+		fmt.Printf("\r  ↓ %s  %.0f%%  (%s / %s)   ",
+			filepath.Base(p.dest),
+			pct,
+			formatSize(p.written),
+			formatSize(p.total),
+		)
 	}
-	return nil
+	return n, err
 }
