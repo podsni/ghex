@@ -3,6 +3,7 @@ package uninstall
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -61,9 +62,15 @@ func NewService() *Service {
 		s.installDir = filepath.Join(localAppData, "ghex")
 		s.binaryPath = filepath.Join(s.installDir, "ghex.exe")
 	} else {
-		// Linux/macOS: /usr/local/bin/ghex
-		s.binaryPath = "/usr/local/bin/ghex"
-		s.installDir = "/usr/local/bin"
+		// Try to find the actual binary location
+		if binaryPath, err := exec.LookPath("ghex"); err == nil {
+			s.binaryPath = binaryPath
+			s.installDir = filepath.Dir(binaryPath)
+		} else {
+			// Fallback to common locations
+			s.binaryPath = "/usr/local/bin/ghex"
+			s.installDir = "/usr/local/bin"
+		}
 	}
 
 	return s
@@ -151,20 +158,19 @@ func (s *Service) Execute(opts Options) *Result {
 	}
 
 	// Handle config removal
-	if opts.Purge || (!opts.KeepConfig && !opts.Force) {
-		// Only remove config if --purge is set, or if not --keep-config and not --force
-		// When --force is used without --purge, we don't remove config
-		if opts.Purge {
-			if err := s.RemoveConfig(); err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("Failed to remove config: %v", err))
-			} else {
-				result.ConfigRemoved = true
-				if platform.FileExists(s.configPath) {
-					result.RemovedFiles = append(result.RemovedFiles, s.configPath)
-				}
-				if platform.FileExists(s.legacyConfig) {
-					result.RemovedFiles = append(result.RemovedFiles, s.legacyConfig)
-				}
+	if opts.Purge && !opts.KeepConfig {
+		// Track which config paths exist before removal
+		configExisted := platform.FileExists(s.configPath)
+		legacyExisted := platform.FileExists(s.legacyConfig)
+		if err := s.RemoveConfig(); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("Failed to remove config: %v", err))
+		} else {
+			result.ConfigRemoved = true
+			if configExisted {
+				result.RemovedFiles = append(result.RemovedFiles, s.configPath)
+			}
+			if legacyExisted {
+				result.RemovedFiles = append(result.RemovedFiles, s.legacyConfig)
 			}
 		}
 	}

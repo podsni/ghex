@@ -160,7 +160,10 @@ func downloadFromFileList(filePath string) error {
 		return fmt.Errorf("failed to read file list: %w", err)
 	}
 
-	lines := strings.Split(string(data), "\n")
+	// Normalize line endings (handle Windows \r\n)
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	lines := strings.Split(content, "\n")
 	var urls []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)

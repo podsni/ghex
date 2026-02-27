@@ -43,6 +43,7 @@ function Write-ErrorMsg {
     param([string]$Message)
     Write-Host "[ERROR] " -ForegroundColor Red -NoNewline
     Write-Host $Message
+    throw $Message
 }
 
 function Confirm-Action {
@@ -196,6 +197,9 @@ function Main {
     
     # Remove binary
     $binaryRemoved = Remove-GhexBinary
+    if (-not $binaryRemoved) {
+        Write-Warn "Binary removal failed. Continuing with other cleanup..."
+    }
     
     # Remove from PATH
     Remove-FromPath
@@ -235,4 +239,9 @@ if ($args -contains "--help" -or $args -contains "-h") {
     exit 0
 }
 
-Main -Purge:$purgeFlag -Force:$forceFlag
+try {
+    Main -Purge:$purgeFlag -Force:$forceFlag
+} catch {
+    Write-Host "[ERROR] $_" -ForegroundColor Red
+    exit 1
+}

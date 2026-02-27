@@ -40,6 +40,9 @@ func EnsureConfigBlock(alias, keyPath, hostname string) error {
 		content = ""
 	} else {
 		content = string(data)
+		// Normalize line endings
+		content = strings.ReplaceAll(content, "\r\n", "\n")
+		content = strings.ReplaceAll(content, "\r", "\n")
 	}
 
 	// Build the new Host block
@@ -70,6 +73,8 @@ func EnsureConfigBlock(alias, keyPath, hostname string) error {
 
 // buildHostBlock creates an SSH Host block string
 func buildHostBlock(alias, keyPath, hostname string) string {
+	// Normalize path separators for SSH config (always use forward slashes)
+	keyPath = strings.ReplaceAll(keyPath, "\\", "/")
 	return fmt.Sprintf(`Host %s
   HostName %s
   User git
@@ -86,6 +91,9 @@ func containsHostBlock(content, alias string) bool {
 
 // updateHostBlock replaces an existing Host block with a new one
 func updateHostBlock(content, alias, newBlock string) string {
+	// Normalize line endings
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
 	lines := strings.Split(content, "\n")
 	var result []string
 	inBlock := false
@@ -131,6 +139,9 @@ func RemoveHostBlock(alias string) error {
 	}
 
 	content := string(data)
+	// Normalize line endings
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
 	if !containsHostBlock(content, alias) {
 		return nil // Block doesn't exist
 	}
@@ -175,6 +186,9 @@ func GetHostBlock(alias string) (string, error) {
 	}
 
 	content := string(data)
+	// Normalize line endings
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
 	lines := strings.Split(content, "\n")
 	var blockLines []string
 	inBlock := false

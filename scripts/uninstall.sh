@@ -65,25 +65,21 @@ confirm() {
 }
 
 remove_binary() {
-    local binary_path="${INSTALL_DIR}/${BINARY_NAME}"
-    
+    local binary_path="$1"
     if [ -f "$binary_path" ]; then
-        info "Removing binary: $binary_path"
-        
-        if [ -w "$binary_path" ] || [ -w "$INSTALL_DIR" ]; then
-            rm -f "$binary_path"
-            success "Binary removed"
-        else
-            info "Elevated permissions required..."
+        if rm -f "$binary_path" 2>/dev/null; then
+            success "Removed binary: $binary_path"
+            return 0
+        elif command -v sudo &> /dev/null; then
             if sudo rm -f "$binary_path"; then
-                success "Binary removed"
-            else
-                error "Failed to remove binary. Try manually: sudo rm $binary_path"
-                return 1
+                success "Removed binary: $binary_path"
+                return 0
             fi
+        else
+            error "Cannot remove binary (no write permission and sudo not available)"
+            error "Try manually: rm -f $binary_path"
+            return 1
         fi
-    else
-        warn "Binary not found at $binary_path"
     fi
 }
 
@@ -176,7 +172,7 @@ main() {
     fi
     
     # Remove binary
-    remove_binary
+    remove_binary "${INSTALL_DIR}/${BINARY_NAME}"
     
     # Handle config removal
     if [ "$purge" = true ]; then

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -47,12 +48,16 @@ func GetCurrentBinaryPath() (string, error) {
 
 // getBackupPath returns the backup file path based on platform
 func getBackupPath() string {
-	var baseDir string
-
 	if runtime.GOOS == "windows" {
-		baseDir = os.Getenv("APPDATA")
+		baseDir := os.Getenv("APPDATA")
 		if baseDir == "" {
-			baseDir = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
+			userProfile := os.Getenv("USERPROFILE")
+			if userProfile == "" {
+				// Last resort fallback
+				homeDir, _ := os.UserHomeDir()
+				userProfile = homeDir
+			}
+			baseDir = filepath.Join(userProfile, "AppData", "Roaming")
 		}
 		return filepath.Join(baseDir, "ghex", "backup", "ghex.exe.backup")
 	}
@@ -141,22 +146,36 @@ func (m *BinaryManager) replaceUnix(newBinaryPath string) error {
 
 // replaceWindows handles binary replacement on Windows
 // Windows doesn't allow replacing a running executable directly
+// We use a batch script that runs after this process exits
 func (m *BinaryManager) replaceWindows(newBinaryPath string) error {
-	// Rename current binary to .old
-	oldPath := m.BinaryPath + ".old"
-	if err := os.Rename(m.BinaryPath, oldPath); err != nil {
-		return fmt.Errorf("failed to rename current binary: %w", err)
+	// Write a batch script to replace the binary after this process exits
+	// Use a unique script name to avoid conflicts
+	scriptPath := m.BinaryPath + "_update.bat"
+	batchContent := fmt.Sprintf(`@echo off
+setlocal
+set "NEW_BINARY=%s"
+set "TARGET=%s"
+set "SCRIPT=%%~f0"
+
+:wait_loop
+timeout /t 1 /nobreak > nul
+move /y "%%NEW_BINARY%%" "%%TARGET%%" > nul 2>&1
+if errorlevel 1 goto wait_loop
+
+del "%%SCRIPT%%"
+endlocal
+`, newBinaryPath, m.BinaryPath)
+
+	if err := os.WriteFile(scriptPath, []byte(batchContent), 0755); err != nil {
+		return fmt.Errorf("failed to write update script: %w", err)
 	}
 
-	// Copy new binary to destination
-	if err := copyFile(newBinaryPath, m.BinaryPath); err != nil {
-		// Try to restore old binary
-		_ = os.Rename(oldPath, m.BinaryPath)
-		return fmt.Errorf("failed to copy new binary: %w", err)
+	// Launch the script detached so it runs after we exit
+	cmd := exec.Command("cmd", "/c", "start", "/b", "", scriptPath)
+	if err := cmd.Start(); err != nil {
+		os.Remove(scriptPath)
+		return fmt.Errorf("failed to launch update script: %w", err)
 	}
-
-	// Remove old binary (may fail if still in use, that's ok)
-	os.Remove(oldPath)
 
 	return nil
 }
@@ -201,13 +220,12 @@ func CheckWritePermission(path string) error {
 	dir := filepath.Dir(path)
 
 	// Try to create a temp file in the directory
-	tmpFile := filepath.Join(dir, ".ghex_permission_check")
-	f, err := os.Create(tmpFile)
+	f, err := os.CreateTemp(dir, ".ghex_permission_check_*")
 	if err != nil {
 		return fmt.Errorf("%w: cannot write to %s", ErrPermissionDenied, dir)
 	}
 	f.Close()
-	os.Remove(tmpFile)
+	os.Remove(f.Name())
 
 	return nil
 }
